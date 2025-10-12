@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "本地",
+      "host": "127.0.0.1",
+      "type": "gpu",
+      "local": true
+    },
+    {
+      "name": "主机1",
+      "host": "192.168.0.1",
+      "type": "npu",
+      "local": false,
+      "port": 22,
+      "auth": {
+        "type": "password",
+        "username": "root",
+        "password": "123456"
+      }
+    }
+  ]
+}

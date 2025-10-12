@@ -1,0 +1,54 @@
+{
+  "servers": [
+    {
+      "name": "本机GPU",
+      "host": "localhost",
+      "type": "gpu",
+      "local": true
+    },
+    {
+      "name": "密码登录服务器",
+      "host": "192.168.1.100",
+      "port": 22,
+      "type": "gpu",
+      "auth": {
+        "type": "password",
+        "username": "root",
+        "password": "your_password"
+      }
+    },
+    {
+      "name": "密钥登录服务器",
+      "host": "192.168.1.101",
+      "port": 22,
+      "type": "npu",
+      "auth": {
+        "type": "key",
+        "username": "ubuntu",
+        "key_file": "/path/to/private_key",
+        "key_password": null
+      }
+    },
+    {
+      "name": "跳板机服务器",
+      "host": "10.0.0.50",
+      "port": 22,
+      "type": "gpu",
+      "auth": {
+        "type": "password",
+        "username": "root",
+        "password": "bastion_password"
+      },
+      "bastion": {
+        "host": "jump.example.com",
+        "port": 22,
+        "auth": {
+          "type": "key",
+          "username": "jump_user",
+          "key_file": "/path/to/jump_key",
+          "key_password": "jump_key_password"
+        }
+      }
+    }
+  ]
+}

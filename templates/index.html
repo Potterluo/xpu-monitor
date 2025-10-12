@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPU/GPU 监控平台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>NPU/GPU 监控平台</h1>
+            <div class="controls">
+                <button id="refreshBtn" class="btn">手动刷新</button>
+                <button id="configBtn" class="btn btn-secondary">服务器配置</button>
+                <span id="lastUpdate" class="last-update"></span>
+            </div>
+        </header>
+
+        <main>
+            <div id="servers" class="servers-grid">
+                <!-- 服务器卡片将通过JavaScript动态生成 -->
+            </div>
+        </main>
+
+        <footer>
+            <p>实时监控您的NPU/GPU设备状态 | 每30秒自动更新</p>
+        </footer>
+    </div>
+
+    <!-- 加载提示 -->
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>正在连接服务器...</p>
+    </div>
+
+    <!-- 配置模态框 -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>服务器配置管理</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="config-section">
+                    <h3>添加新服务器</h3>
+                    <form id="addServerForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="serverName">服务器名称:</label>
+                                <input type="text" id="serverName" name="name" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="serverHost">主机地址:</label>
+                                <input type="text" id="serverHost" name="host" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="serverType">设备类型:</label>
+                                <select id="serverType" name="type" required>
+                                    <option value="gpu">GPU</option>
+                                    <option value="npu">NPU</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="isLocal" name="local">
+                                    本地机器
+                                </label>
+                            </div>
+                        </div>
+                        <div id="remoteFields" class="remote-fields" style="display: none;">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="serverPort">SSH端口:</label>
+                                    <input type="number" id="serverPort" name="port" value="22">
+                                </div>
+                                <div class="form-group">
+                                    <label for="authType">认证方式:</label>
+                                    <select id="authType" name="authType" onchange="toggleAuthFields()">
+                                        <option value="password">密码认证</option>
+                                        <option value="key">密钥认证</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 密码认证字段 -->
+                            <div id="passwordAuthFields" class="auth-fields">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="serverUsername">用户名:</label>
+                                        <input type="text" id="serverUsername" name="username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="serverPassword">密码:</label>
+                                        <input type="password" id="serverPassword" name="password">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 密钥认证字段 -->
+                            <div id="keyAuthFields" class="auth-fields" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="keyUsername">用户名:</label>
+                                        <input type="text" id="keyUsername" name="keyUsername">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="keyFile">密钥文件路径:</label>
+                                        <input type="text" id="keyFile" name="keyFile" placeholder="/path/to/private_key">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="keyPassword">密钥密码 (可选):</label>
+                                    <input type="password" id="keyPassword" name="keyPassword" placeholder="如果密钥有密码则填写">
+                                </div>
+                            </div>
+
+                            <!-- 跳板机配置 -->
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="useBastion" name="useBastion" onchange="toggleBastionFields()">
+                                    使用跳板机
+                                </label>
+                            </div>
+
+                            <div id="bastionFields" class="bastion-fields" style="display: none;">
+                                <h4>跳板机配置</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="bastionHost">跳板机地址:</label>
+                                        <input type="text" id="bastionHost" name="bastionHost">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="bastionPort">跳板机端口:</label>
+                                        <input type="number" id="bastionPort" name="bastionPort" value="22">
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="bastionAuthType">跳板机认证方式:</label>
+                                        <select id="bastionAuthType" name="bastionAuthType" onchange="toggleBastionAuthFields()">
+                                            <option value="password">密码认证</option>
+                                            <option value="key">密钥认证</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- 跳板机密码认证 -->
+                                <div id="bastionPasswordFields" class="auth-fields">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="bastionUsername">跳板机用户名:</label>
+                                            <input type="text" id="bastionUsername" name="bastionUsername">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="bastionPassword">跳板机密码:</label>
+                                            <input type="password" id="bastionPassword" name="bastionPassword">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 跳板机密钥认证 -->
+                                <div id="bastionKeyFields" class="auth-fields" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="bastionKeyUsername">跳板机用户名:</label>
+                                            <input type="text" id="bastionKeyUsername" name="bastionKeyUsername">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="bastionKeyFile">跳板机密钥文件:</label>
+                                            <input type="text" id="bastionKeyFile" name="bastionKeyFile" placeholder="/path/to/bastion_key">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="bastionKeyPassword">跳板机密钥密码 (可选):</label>
+                                        <input type="password" id="bastionKeyPassword" name="bastionKeyPassword">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn">添加服务器</button>
+                    </form>
+                </div>
+
+                <div class="config-section">
+                    <h3>现有服务器</h3>
+                    <div id="serverList" class="server-list">
+                        <!-- 服务器列表将通过JavaScript动态生成 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

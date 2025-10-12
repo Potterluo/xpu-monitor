@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//e/**)",
+      "Bash(python app.py)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5000)",
+      "Bash(pkill -f \"python app.py\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

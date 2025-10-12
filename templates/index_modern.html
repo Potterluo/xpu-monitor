@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPU/GPU 智能监控平台</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Preline UI -->
+    <link rel="stylesheet" href="https://preline.co/assets/css/preline.css">
+    <script src="https://preline.co/assets/js/preline.js"></script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom Tailwind Config -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                            950: '#172554'
+                        },
+                        secondary: {
+                            50: '#f8fafc',
+                            100: '#f1f5f9',
+                            200: '#e2e8f0',
+                            300: '#cbd5e1',
+                            400: '#94a3b8',
+                            500: '#64748b',
+                            600: '#475569',
+                            700: '#334155',
+                            800: '#1e293b',
+                            900: '#0f172a',
+                            950: '#020617'
+                        },
+                        success: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            200: '#bbf7d0',
+                            300: '#86efac',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                            950: '#052e16'
+                        },
+                        warning: {
+                            50: '#fffbeb',
+                            100: '#fef3c7',
+                            200: '#fde68a',
+                            300: '#fcd34d',
+                            400: '#fbbf24',
+                            500: '#f59e0b',
+                            600: '#d97706',
+                            700: '#b45309',
+                            800: '#92400e',
+                            900: '#78350f',
+                            950: '#451a03'
+                        },
+                        danger: {
+                            50: '#fef2f2',
+                            100: '#fee2e2',
+                            200: '#fecaca',
+                            300: '#fca5a5',
+                            400: '#f87171',
+                            500: '#ef4444',
+                            600: '#dc2626',
+                            700: '#b91c1c',
+                            800: '#991b1b',
+                            900: '#7f1d1d',
+                            950: '#450a0a'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-in-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'scale-in': 'scaleIn 0.2s ease-out',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0', transform: 'translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' }
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' }
+                        },
+                        scaleIn: {
+                            '0%': { opacity: '0', transform: 'scale(0.95)' },
+                            '100%': { opacity: '1', transform: 'scale(1)' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            @apply bg-gray-100 dark:bg-gray-800;
+        }
+        ::-webkit-scrollbar-thumb {
+            @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            @apply bg-gray-400 dark:bg-gray-500;
+        }
+
+        /* Glass morphism effect */
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .glass-dark {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Loading animation */
+        .loader {
+            border: 3px solid rgba(59, 130, 246, 0.1);
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Smooth transitions */
+        * {
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 min-h-screen font-sans flex flex-col">
+
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 border-b border-gray-200 dark:border-gray-700">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+                <!-- Logo and Title -->
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-microchip text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 dark:text-white">NPU/GPU 智能监控</h1>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">实时性能监控平台</p>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center space-x-4">
+                    <!-- Refresh Button -->
+                    <button id="refreshBtn" class="relative group">
+                        <div class="absolute inset-0 bg-primary-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-sync-alt text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">刷新</span>
+                        </div>
+                    </button>
+
+                    <!-- Settings Button -->
+                    <button id="configBtn" class="relative group">
+                        <div class="absolute inset-0 bg-secondary-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-cog text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">配置</span>
+                        </div>
+                    </button>
+
+                    <!-- Theme Toggle -->
+                    <button id="themeToggle" class="relative group">
+                        <div class="absolute inset-0 bg-gray-700 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-moon text-gray-700 dark:text-yellow-400 group-hover:text-white" id="themeIcon"></i>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8 flex-1">
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="w-12 h-12 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-server text-primary-600 dark:text-primary-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">总计</span>
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="totalServers">0</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400">服务器总数</p>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="w-12 h-12 bg-success-100 dark:bg-success-900 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-check-circle text-success-600 dark:text-success-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">在线</span>
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="onlineServers">0</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400">正常运行</p>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="w-12 h-12 bg-warning-100 dark:bg-warning-900 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-exclamation-triangle text-warning-600 dark:text-warning-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">离线</span>
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="offlineServers">0</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400">连接异常</p>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="w-12 h-12 bg-danger-100 dark:bg-danger-900 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-microchip text-danger-600 dark:text-danger-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">设备</span>
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="totalDevices">0</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400">NPU/GPU 总数</p>
+            </div>
+        </div>
+
+        <!-- Server Cards Grid -->
+        <div id="servers" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            <!-- Server cards will be dynamically inserted here -->
+        </div>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-xl p-8 flex flex-col items-center">
+            <div class="loader mb-4"></div>
+            <p class="text-gray-700 dark:text-gray-300">正在连接服务器...</p>
+        </div>
+    </div>
+
+    <!-- Configuration Modal -->
+    <div id="configModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+            <div class="bg-gradient-to-r from-primary-500 to-primary-600 text-white p-6">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold">服务器配置管理</h2>
+                    <button id="closeModal" class="text-white hover:text-gray-200 transition-colors">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6 overflow-y-auto max-h-[70vh]">
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">添加新服务器</h3>
+                    <form id="addServerForm" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">服务器名称</label>
+                                <input type="text" id="serverName" name="name" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">主机地址</label>
+                                <input type="text" id="serverHost" name="host" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">设备类型</label>
+                                <select id="serverType" name="type" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                    <option value="gpu">GPU</option>
+                                    <option value="npu">NPU</option>
+                                </select>
+                            </div>
+                            <div class="flex items-center">
+                                <label class="flex items-center">
+                                    <input type="checkbox" id="isLocal" name="local" class="rounded text-primary-600 focus:ring-primary-500">
+                                    <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">本地机器</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Remote fields will be dynamically shown/hidden -->
+                        <div id="remoteFields" class="space-y-4">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SSH端口</label>
+                                    <input type="number" id="serverPort" name="port" value="22"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">认证方式</label>
+                                    <select id="authType" name="authType" onchange="toggleAuthFields()"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                        <option value="password">密码认证</option>
+                                        <option value="key">密钥认证</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Password auth fields -->
+                            <div id="passwordAuthFields" class="space-y-4">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">用户名</label>
+                                        <input type="text" id="serverUsername" name="username"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密码</label>
+                                        <input type="password" id="serverPassword" name="password"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Key auth fields -->
+                            <div id="keyAuthFields" class="space-y-4 hidden">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">用户名</label>
+                                        <input type="text" id="keyUsername" name="keyUsername"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密钥文件路径</label>
+                                        <input type="text" id="keyFile" name="keyFile" placeholder="/path/to/private_key"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密钥密码 (可选)</label>
+                                    <input type="password" id="keyPassword" name="keyPassword" placeholder="如果密钥有密码则填写"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end space-x-4">
+                            <button type="button" onclick="closeConfigModal()" class="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                取消
+                            </button>
+                            <button type="submit" class="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
+                                添加服务器
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">现有服务器</h3>
+                    <div id="serverList" class="space-y-3">
+                        <!-- Server list will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-auto">
+        <div class="container mx-auto px-4 py-4 text-center">
+            <p class="text-gray-500 dark:text-gray-400 text-sm">
+                © 2025 GPU监控平台.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Global variables
+        let socket;
+        let servers = {};
+        let isDarkMode = false;
+
+        // DOM elements
+        const serversContainer = document.getElementById('servers');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const configBtn = document.getElementById('configBtn');
+        const themeToggle = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const configModal = document.getElementById('configModal');
+        const closeModal = document.getElementById('closeModal');
+        const loadingDiv = document.getElementById('loading');
+        const addServerForm = document.getElementById('addServerForm');
+        const serverList = document.getElementById('serverList');
+        const isLocalCheckbox = document.getElementById('isLocal');
+        const remoteFields = document.getElementById('remoteFields');
+
+        // Initialize theme
+        function initTheme() {
+            if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+                isDarkMode = true;
+                themeIcon.classList.remove('fa-moon');
+                themeIcon.classList.add('fa-sun');
+            } else {
+                document.documentElement.classList.remove('dark');
+                isDarkMode = false;
+                themeIcon.classList.remove('fa-sun');
+                themeIcon.classList.add('fa-moon');
+            }
+        }
+
+        // Toggle theme
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            if (isDarkMode) {
+                document.documentElement.classList.add('dark');
+                localStorage.theme = 'dark';
+                themeIcon.classList.remove('fa-moon');
+                themeIcon.classList.add('fa-sun');
+            } else {
+                document.documentElement.classList.remove('dark');
+                localStorage.theme = 'light';
+                themeIcon.classList.remove('fa-sun');
+                themeIcon.classList.add('fa-moon');
+            }
+        }
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            initTheme();
+            initializeSocket();
+            setupEventListeners();
+            updateStats();
+
+            // Set default state - show remote fields with password auth
+            isLocalCheckbox.checked = false;
+            remoteFields.style.display = 'block';
+            document.getElementById('authType').value = 'password';
+            toggleAuthFields();
+        });
+
+        // Initialize WebSocket connection
+        function initializeSocket() {
+            socket = io({
+                transports: ['websocket', 'polling'],
+                upgrade: true,
+                rememberUpgrade: true,
+                timeout: 10000,
+                forceNew: false
+            });
+
+            let reconnectAttempts = 0;
+            let loadingTimeout = null;
+
+            socket.on('connect', function() {
+                console.log('已连接到服务器');
+                reconnectAttempts = 0;
+                hideLoading();
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
+            });
+
+            socket.on('disconnect', function(reason) {
+                console.log('与服务器断开连接:', reason);
+
+                // Only show loading for intentional disconnections or long reconnects
+                if (reason === 'io client disconnect') {
+                    showLoading('正在重新连接...');
+                } else {
+                    // For network issues, wait a bit before showing loading
+                    loadingTimeout = setTimeout(() => {
+                        showLoading('网络连接中断，正在重新连接...');
+                    }, 3000);
+                }
+            });
+
+            socket.on('reconnect', function(attemptNumber) {
+                console.log('重新连接成功，尝试次数:', attemptNumber);
+                reconnectAttempts = 0;
+                hideLoading();
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
+            });
+
+            socket.on('reconnect_attempt', function(attemptNumber) {
+                reconnectAttempts = attemptNumber;
+                console.log(`正在尝试重新连接 (${attemptNumber})...`);
+
+                // Only show loading after multiple failed attempts
+                if (attemptNumber >= 3 && !loadingTimeout) {
+                    showLoading(`正在重新连接... (${attemptNumber})`);
+                }
+            });
+
+            socket.on('reconnect_error', function(error) {
+                console.error('重新连接失败:', error);
+                if (reconnectAttempts >= 5) {
+                    showLoading('连接失败，请检查网络后刷新页面');
+                }
+            });
+
+            socket.on('reconnect_failed', function() {
+                console.error('重新连接失败，已达到最大重试次数');
+                showLoading('连接失败，请刷新页面重试');
+            });
+
+            socket.on('initial_data', function(data) {
+                console.log('接收到初始数据:', data);
+                updateServers(data);
+            });
+
+            socket.on('server_update', function(serverData) {
+                console.log('服务器更新:', serverData);
+                updateServer(serverData);
+            });
+
+            socket.on('servers_refreshed', function(data) {
+                console.log('服务器列表已刷新:', data);
+                updateServers(data);
+            });
+
+            socket.on('connect_error', function(error) {
+                console.error('连接错误:', error);
+                // Don't immediately show loading on connect_error, let reconnection logic handle it
+                if (reconnectAttempts === 0) {
+                    showLoading('连接失败，请刷新页面重试');
+                }
+            });
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            refreshBtn.addEventListener('click', function() {
+                refreshData();
+            });
+
+            configBtn.addEventListener('click', function() {
+                openConfigModal();
+            });
+
+            closeModal.addEventListener('click', function() {
+                closeConfigModal();
+            });
+
+            themeToggle.addEventListener('click', toggleTheme);
+
+            // Local machine checkbox
+            isLocalCheckbox.addEventListener('change', function() {
+                toggleRemoteFields();
+            });
+
+            // Add server form
+            addServerForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                addServer();
+            });
+
+            // Close modal on outside click
+            configModal.addEventListener('click', function(e) {
+                if (e.target === configModal) {
+                    closeConfigModal();
+                }
+            });
+        }
+
+        // Toggle remote fields
+        function toggleRemoteFields() {
+            if (isLocalCheckbox.checked) {
+                remoteFields.style.display = 'none';
+                clearAllFields();
+            } else {
+                remoteFields.style.display = 'block';
+            }
+        }
+
+        // Clear all form fields
+        function clearAllFields() {
+            document.getElementById('serverPort').value = '22';
+            document.getElementById('serverUsername').value = '';
+            document.getElementById('serverPassword').value = '';
+            document.getElementById('keyUsername').value = '';
+            document.getElementById('keyFile').value = '';
+            document.getElementById('keyPassword').value = '';
+            document.getElementById('authType').value = 'password';
+            toggleAuthFields();
+        }
+
+        // Toggle auth fields
+        function toggleAuthFields() {
+            const authType = document.getElementById('authType').value;
+            const passwordFields = document.getElementById('passwordAuthFields');
+            const keyFields = document.getElementById('keyAuthFields');
+
+            if (authType === 'password') {
+                passwordFields.style.display = 'block';
+                keyFields.style.display = 'none';
+            } else {
+                passwordFields.style.display = 'none';
+                keyFields.style.display = 'block';
+            }
+        }
+
+        // Create server card
+        function createServerCard(serverData) {
+            const card = document.createElement('div');
+            card.className = 'bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1';
+            card.id = `server-${serverData.host}`;
+
+            const statusConfig = getStatusConfig(serverData.status);
+            const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+            const locationBadge = serverData.local ?
+                '<span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">本地</span>' :
+                '<span class="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 rounded-full">远程</span>';
+
+            card.innerHTML = `
+                <div class="p-6">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 ${statusConfig.bgColor} rounded-lg flex items-center justify-center">
+                                <i class="${statusConfig.icon} ${statusConfig.iconColor}"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-900 dark:text-white">${serverData.name}</h3>
+                                <p class="text-sm text-gray-500 dark:text-gray-400">${serverData.host}</p>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end space-y-1">
+                            <span class="px-2 py-1 text-xs font-medium ${statusConfig.bgColor} ${statusConfig.textColor} rounded-full">
+                                ${statusConfig.text}
+                            </span>
+                            ${locationBadge}
+                        </div>
+                    </div>
+
+                    <!-- Devices -->
+                    <div class="space-y-3">
+                        ${renderDevices(serverData)}
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span>${deviceType} 设备</span>
+                            <span>更新于 ${serverData.last_update || '-'}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            serversContainer.appendChild(card);
+        }
+
+        // Render devices
+        function renderDevices(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-4"><i class="fas fa-spinner fa-spin text-blue-500 text-2xl mb-2"></i><p class="text-sm text-blue-500">正在连接服务器...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-4"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-2xl mb-2"></i><p class="text-sm text-gray-500 dark:text-gray-400">服务器离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-4"><i class="fas fa-exclamation-circle text-red-500 text-2xl mb-2"></i><p class="text-sm text-red-500">${serverData.error || '未知错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-4"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-2xl mb-2"></i><p class="text-sm text-gray-500 dark:text-gray-400">未检测到${deviceType}设备</p></div>`;
+            }
+
+            return serverData.devices.map(device => `
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="font-medium text-gray-900 dark:text-white">${serverData.type === 'npu' ? 'NPU' : 'GPU'} ${device.id}</h4>
+                        <span class="text-sm text-gray-500 dark:text-gray-400">${device.name}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">温度</span>
+                            <span class="font-medium ${getTempClass(device.temp)}">${device.temp || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">功耗</span>
+                            <span class="font-medium">${device.power || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">显存</span>
+                            <span class="font-medium">${device.memory_usage || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">利用率</span>
+                            <span class="font-medium ${getUtilClass(device.utilization)}">${device.utilization || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Get status configuration
+        function getStatusConfig(status) {
+            const configs = {
+                online: {
+                    text: '在线',
+                    bgColor: 'bg-green-100 dark:bg-green-900',
+                    textColor: 'text-green-800 dark:text-green-200',
+                    icon: 'fas fa-check-circle',
+                    iconColor: 'text-green-600 dark:text-green-400'
+                },
+                offline: {
+                    text: '离线',
+                    bgColor: 'bg-red-100 dark:bg-red-900',
+                    textColor: 'text-red-800 dark:text-red-200',
+                    icon: 'fas fa-times-circle',
+                    iconColor: 'text-red-600 dark:text-red-400'
+                },
+                error: {
+                    text: '错误',
+                    bgColor: 'bg-yellow-100 dark:bg-yellow-900',
+                    textColor: 'text-yellow-800 dark:text-yellow-200',
+                    icon: 'fas fa-exclamation-circle',
+                    iconColor: 'text-yellow-600 dark:text-yellow-400'
+                },
+                connecting: {
+                    text: '连接中',
+                    bgColor: 'bg-blue-100 dark:bg-blue-900',
+                    textColor: 'text-blue-800 dark:text-blue-200',
+                    icon: 'fas fa-spinner fa-spin',
+                    iconColor: 'text-blue-600 dark:text-blue-400'
+                }
+            };
+            return configs[status] || configs.offline;
+        }
+
+        // Get temperature class
+        function getTempClass(temp) {
+            if (!temp) return 'text-gray-500 dark:text-gray-400';
+            const tempValue = parseInt(temp);
+            if (tempValue < 60) return 'text-green-600 dark:text-green-400';
+            if (tempValue < 80) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-red-600 dark:text-red-400';
+        }
+
+        // Get utilization class
+        function getUtilClass(utilization) {
+            if (!utilization) return 'text-gray-500 dark:text-gray-400';
+            const utilValue = parseInt(utilization);
+            if (utilValue < 30) return 'text-blue-600 dark:text-blue-400';
+            if (utilValue < 70) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-red-600 dark:text-red-400';
+        }
+
+        // Update all servers
+        function updateServers(serverDataList) {
+            serversContainer.innerHTML = '';
+            servers = {};
+
+            serverDataList.forEach(serverData => {
+                servers[serverData.host] = serverData;
+                createServerCard(serverData);
+            });
+
+            updateStats();
+            updateLastUpdateTime();
+        }
+
+        // Update single server
+        function updateServer(serverData) {
+            servers[serverData.host] = serverData;
+
+            let serverCard = document.getElementById(`server-${serverData.host}`);
+            if (serverCard) {
+                const newCard = createServerCard(serverData);
+                serverCard.replaceWith(newCard);
+            } else {
+                createServerCard(serverData);
+            }
+
+            updateStats();
+            updateLastUpdateTime();
+        }
+
+        // Update statistics
+        function updateStats() {
+            const serverDataList = Object.values(servers);
+            const onlineCount = serverDataList.filter(s => s.status === 'online').length;
+            const offlineCount = serverDataList.filter(s => s.status === 'offline').length;
+            const totalDevices = serverDataList.reduce((sum, s) => sum + (s.devices ? s.devices.length : 0), 0);
+
+            document.getElementById('totalServers').textContent = serverDataList.length;
+            document.getElementById('onlineServers').textContent = onlineCount;
+            document.getElementById('offlineServers').textContent = offlineCount;
+            document.getElementById('totalDevices').textContent = totalDevices;
+        }
+
+        // Update last update time
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN');
+            document.getElementById('lastUpdate').textContent = `最后更新: ${timeString}`;
+            document.getElementById('lastUpdateInfo').textContent = timeString;
+        }
+
+        // Refresh data
+        async function refreshData() {
+            refreshBtn.disabled = true;
+            const icon = refreshBtn.querySelector('i');
+            icon.classList.add('fa-spin');
+
+            try {
+                const response = await fetch('/api/refresh', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    console.log('手动刷新成功');
+                } else {
+                    console.error('刷新失败');
+                }
+            } catch (error) {
+                console.error('刷新请求失败:', error);
+            } finally {
+                setTimeout(() => {
+                    refreshBtn.disabled = false;
+                    icon.classList.remove('fa-spin');
+                }, 1000);
+            }
+        }
+
+        // Configuration modal functions
+        function openConfigModal() {
+            configModal.classList.remove('hidden');
+            loadServerConfig();
+        }
+
+        function closeConfigModal() {
+            configModal.classList.add('hidden');
+            addServerForm.reset();
+            toggleRemoteFields();
+        }
+
+        // Load server configuration
+        async function loadServerConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                renderServerList(config.servers || []);
+            } catch (error) {
+                console.error('加载服务器配置失败:', error);
+            }
+        }
+
+        // Render server list
+        function renderServerList(servers) {
+            serverList.innerHTML = '';
+
+            if (servers.length === 0) {
+                serverList.innerHTML = '<p class="text-center text-gray-500 dark:text-gray-400 py-8">暂无服务器配置</p>';
+                return;
+            }
+
+            servers.forEach(server => {
+                const serverItem = document.createElement('div');
+                serverItem.className = 'bg-gray-50 dark:bg-gray-700 rounded-lg p-4 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors';
+
+                const localBadge = server.local || server.host === 'localhost' || server.host === '127.0.0.1'
+                    ? '<span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">本地</span>'
+                    : '<span class="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 rounded-full">远程</span>';
+
+                const typeBadge = server.type === 'npu'
+                    ? '<span class="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 rounded-full">NPU</span>'
+                    : '<span class="px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 rounded-full">GPU</span>';
+
+                serverItem.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div>
+                            <h4 class="font-medium text-gray-900 dark:text-white">${server.name}</h4>
+                            <p class="text-sm text-gray-500 dark:text-gray-400">${server.host}</p>
+                        </div>
+                        <div class="flex space-x-2">
+                            ${localBadge}
+                            ${typeBadge}
+                        </div>
+                    </div>
+                    <button onclick="deleteServer('${server.name}')" class="text-red-500 hover:text-red-700 transition-colors">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                `;
+
+                serverList.appendChild(serverItem);
+            });
+        }
+
+        // Add server
+        async function addServer() {
+            const formData = new FormData(addServerForm);
+            const serverData = {
+                name: formData.get('name'),
+                host: formData.get('host'),
+                type: formData.get('type'),
+                local: isLocalCheckbox.checked
+            };
+
+            if (!serverData.local) {
+                serverData.port = parseInt(formData.get('port')) || 22;
+
+                const authType = formData.get('authType');
+                if (authType === 'password') {
+                    serverData.auth = {
+                        type: 'password',
+                        username: formData.get('username'),
+                        password: formData.get('password')
+                    };
+                } else if (authType === 'key') {
+                    serverData.auth = {
+                        type: 'key',
+                        username: formData.get('keyUsername'),
+                        key_file: formData.get('keyFile'),
+                        key_password: formData.get('keyPassword') || null
+                    };
+                }
+            }
+
+            try {
+                const response = await fetch('/api/config/server', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(serverData)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert('服务器添加成功');
+                    closeConfigModal();
+                } else {
+                    alert(`添加失败: ${result.error}`);
+                }
+            } catch (error) {
+                console.error('添加服务器失败:', error);
+                alert('添加服务器失败，请检查网络连接');
+            }
+        }
+
+        // Delete server
+        async function deleteServer(serverName) {
+            if (!confirm(`确定要删除服务器 "${serverName}" 吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/config/server/${encodeURIComponent(serverName)}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert('服务器删除成功');
+                    // 请求服务器列表刷新
+                    socket.emit('request_servers');
+                    // 同时也重新加载配置列表
+                    loadServerConfig();
+                } else {
+                    alert(`删除失败: ${result.error}`);
+                }
+            } catch (error) {
+                console.error('删除服务器失败:', error);
+                alert('删除服务器失败，请检查网络连接');
+            }
+        }
+
+        // Loading functions
+        function showLoading(message = '正在连接服务器...') {
+            loadingDiv.classList.remove('hidden');
+            const loadingText = loadingDiv.querySelector('p');
+            if (loadingText) {
+                loadingText.textContent = message;
+            }
+        }
+
+        function hideLoading() {
+            loadingDiv.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
