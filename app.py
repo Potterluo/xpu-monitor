@@ -7,6 +7,7 @@ import time
 import subprocess
 import platform
 import os
+import re
 import socket
 from datetime import datetime
 
@@ -344,32 +345,91 @@ def execute_local_command(command):
         return None, str(e)
 
 def parse_npu_smi(output):
-    """解析NPU-SMI输出"""
-    if not output:
+    """解析 npu-smi info 输出，支持双行表格结构"""
+    if not output or not output.strip():
         return []
 
+    lines = [line.rstrip() for line in output.split('\n') if line.strip()]
     devices = []
-    lines = output.strip().split('\n')
 
-    for line in lines:
-        if '|' not in line:
+    # === 查找主表起始位置 ===
+    header_idx = None
+    for i, line in enumerate(lines):
+        if 'NPU' in line and 'Name' in line and '|' in line:
+            header_idx = i
+            break
+    if header_idx is None:
+        print("⚠️ 未找到 NPU 表头")
+        return []
+
+    # 找到数据开始行（+= 分隔线之后）
+    data_start_idx = None
+    for i in range(header_idx + 1, len(lines)):
+        if lines[i].strip().startswith('+='):
+            data_start_idx = i + 1
+            break
+    if data_start_idx is None:
+        print("⚠️ 未找到数据分隔线")
+        return []
+
+    # === 收集设备数据块（到进程表前停止）===
+    device_lines = []
+    for i in range(data_start_idx, len(lines)):
+        line = lines[i]
+        # 遇到进程表或其他新表就结束
+        if '+-' in line and 'Process' in line:
+            break
+        if line.strip().startswith('|'):
+            device_lines.append(line)
+
+    if len(device_lines) == 0:
+        print("⚠️ 未采集到任何设备行")
+        return []
+
+    # === 按每2行为一组解析 ===
+    i = 0
+    while i + 1 < len(device_lines):
+        line1 = device_lines[i]
+        line2 = device_lines[i + 1]
+        i += 2
+
+        # --- 解析第一行：| 0     910B4 | OK | 87.6        38 ... ---
+        match1 = re.match(r'\|\s*(\d+)\s+([^\|]+?)\s*\|\s*([^|]+?)\s*\|\s*([\d.]+)\s+([\d.]+)', line1)
+        if not match1:
+            print(f"⚠️ 跳过第一行（格式不匹配）: {line1}")
             continue
 
-        parts = [p.strip() for p in line.split('|') if p.strip()]
-        if len(parts) >= 6:
-            try:
-                device = {
-                    'id': parts[0].strip(),
-                    'name': parts[1].strip(),
-                    'temp': parts[2].strip(),
-                    'power': parts[3].strip(),
-                    'memory_usage': parts[4].strip(),
-                    'utilization': parts[5].strip()
-                }
-                devices.append(device)
-            except Exception as e:
-                print(f"解析NPU信息失败: {e}")
-                continue
+        npu_id = match1.group(1)
+        name = match1.group(2).strip()
+        health = match1.group(3).strip()
+        power = f"{float(match1.group(4)):.2f}W"
+        temperature = f"{match1.group(5)}°C"
+
+        # --- 解析第二行：| 0 | BusId | 68   0/0   27252/32768 | ---
+        # 提取 AICore(%)
+        aicore_match = re.search(r'\|\s*\d+\s*\|\s*[^\|]+\s*\|\s*([\d.]+)', line2)
+        utilization = f"{int(float(aicore_match.group(1)))}%" if aicore_match else "0%"
+
+        # 提取 HBM-Usage(MB) —— 最后一个数字对
+        hbm_match = re.search(r'(\d+)\s*/\s*(\d+)\s*\|$', line2)
+        if hbm_match:
+            used = int(hbm_match.group(1))
+            total = int(hbm_match.group(2))
+            memory_usage = f"{used}MB / {total}MB"
+        else:
+            memory_usage = "N/A"
+
+        # 构造设备信息
+        device = {
+            'id': npu_id,
+            'name': name,
+            'temp': temperature,
+            'power': power,
+            'memory_usage': memory_usage,
+            'utilization': utilization,
+            'health': health  # 可选字段
+        }
+        devices.append(device)
 
     return devices
 
