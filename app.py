@@ -1171,11 +1171,11 @@ def update_single_server(server_config):
 def update_all_servers():
     """并发更新所有服务器状态"""
     print("开始更新所有服务器状态...")
-    
+
     try:
         config = load_server_config()
         servers = config['servers']
-        
+
         if not servers:
             # 即使没有服务器，也要发送空数据以保持连接活跃
             broadcast_to_sse_clients({
@@ -1184,23 +1184,23 @@ def update_all_servers():
             })
             print("没有配置服务器，发送空数据")
             return
-        
+
         # 使用线程池并发获取服务器状态
         max_workers = min(len(servers), 6)  # 限制最大并发数为6，避免过多连接
-        
+
         print(f"开始并发更新 {len(servers)} 个服务器，使用 {max_workers} 个线程")
-        
+
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ServerUpdate") as executor:
             # 提交所有任务
             future_to_server = {
                 executor.submit(update_single_server, server_config): server_config
                 for server_config in servers
             }
-            
+
             # 收集所有结果，设置超时时间
             results = []
             timeout_count = 0
-            
+
             for future in as_completed(future_to_server, timeout=60):  # 60秒超时
                 server_config = future_to_server[future]
                 try:
@@ -1209,7 +1209,7 @@ def update_all_servers():
                     results.append(server_info)
                     status = server_info.get('status', 'unknown')
                     print(f"服务器 {server_info.get('name', 'Unknown')} 更新完成: {status}")
-                    
+
                 except Exception as e:
                     timeout_count += 1
                     server_name = server_config.get('name', 'Unknown')
@@ -1227,18 +1227,25 @@ def update_all_servers():
                     }
                     server_status[server_config['host']] = error_info
                     results.append(error_info)
-            
+
             # 处理超时的任务
             if timeout_count > 0:
                 print(f"有 {timeout_count} 个服务器更新任务超时")
-        
+
+        # 按照配置文件顺序排序结果
+        ordered_results = []
+        for server_config in servers:
+            host = server_config['host']
+            if host in server_status:
+                ordered_results.append(server_status[host])
+
         # 批量发送所有服务器更新
-        print(f"所有服务器更新完成，共 {len(results)} 个服务器")
+        print(f"所有服务器更新完成，共 {len(ordered_results)} 个服务器")
         broadcast_to_sse_clients({
             'type': 'servers_refreshed',
-            'data': list(server_status.values())
+            'data': ordered_results
         })
-        
+
     except Exception as e:
         print(f"更新所有服务器状态时发生错误: {e}")
         # 发送错误信息给客户端
@@ -1258,34 +1265,56 @@ def update_all_servers():
 
 def broadcast_to_sse_clients(data):
     """向所有SSE客户端广播数据"""
-    if not sse_clients:
+    with sse_clients_lock:
+        client_count = len(sse_clients)
+
+    print(f"准备广播数据类型: {data.get('type', 'unknown')}, 当前客户端数量: {client_count}")
+
+    if client_count == 0:
+        print("没有SSE客户端连接，跳过广播")
         return
-        
+
     message = f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-    
+
     # 使用锁保护对sse_clients的访问
     with sse_clients_lock:
         clients_copy = sse_clients.copy()
-    
+
     disconnected_clients = set()
+    success_count = 0
+
     for client_queue in clients_copy:
         try:
             client_queue.put(message, block=False)
+            success_count += 1
         except queue.Full:
             print(f"SSE客户端队列已满，跳过消息: {data.get('type', 'unknown')}")
         except Exception as e:
             print(f"向SSE客户端发送数据失败: {e}")
             disconnected_clients.add(client_queue)
-    
+
+    print(f"成功广播到 {success_count}/{client_count} 个SSE客户端")
+
     # 清理断开连接的客户端
     if disconnected_clients:
         with sse_clients_lock:
             for client in disconnected_clients:
                 sse_clients.discard(client)
+            print(f"清理了 {len(disconnected_clients)} 个断开的客户端")
 
 def background_update():
     """后台定时更新"""
     print("后台更新线程已启动")
+
+    # 启动时先执行一次更新
+    try:
+        print("应用启动时执行初始服务器更新")
+        update_all_servers()
+        print("初始服务器更新完成")
+    except Exception as e:
+        print(f"初始服务器更新失败: {e}")
+
+    # 然后进入定时更新循环
     while True:
         try:
             print(f"开始后台定时更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1298,12 +1327,8 @@ def background_update():
 @app.route('/')
 def index():
     """主页面"""
-    return render_template('index_modern.html')
-
-@app.route('/classic')
-def classic_index():
-    """经典界面"""
     return render_template('index.html')
+
 
 @app.route('/api/servers')
 def get_servers():
@@ -1617,33 +1642,91 @@ def sse_stream():
     def generate():
         # 为每个客户端创建一个队列，设置最大容量以避免内存泄漏
         client_queue = Queue(maxsize=100)
-        
+
         # 添加客户端到集合
         with sse_clients_lock:
             sse_clients.add(client_queue)
-        
+
         try:
+            # 如果还没有服务器状态数据，先触发一次更新
+            if not server_status:
+                print("SSE客户端连接时服务器状态为空，触发初始更新")
+                # 同步执行一次更新以确保有数据发送
+                config = load_server_config()
+                servers = config['servers']
+
+                if servers:
+                    # 使用线程池同步获取服务器状态
+                    max_workers = min(len(servers), 6)
+
+                    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="SSEInit") as executor:
+                        future_to_server = {
+                            executor.submit(update_single_server, server_config): server_config
+                            for server_config in servers
+                        }
+
+                        for future in as_completed(future_to_server, timeout=60):
+                            server_config = future_to_server[future]
+                            try:
+                                host, server_info, error = future.result(timeout=5)
+                                server_status[host] = server_info
+                            except Exception as e:
+                                server_name = server_config.get('name', 'Unknown')
+                                server_host = server_config.get('host', 'Unknown')
+                                print(f"SSE初始化时处理服务器 {server_name} ({server_host}) 失败: {e}")
+                                error_info = {
+                                    'name': server_name,
+                                    'host': server_host,
+                                    'status': 'error',
+                                    'error': f'初始化失败: {str(e)}',
+                                    'type': server_config.get('type', 'gpu'),
+                                    'devices': [],
+                                    'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                    'local': server_config.get('local', False)
+                                }
+                                server_status[server_config['host']] = error_info
+
+            # 按照配置文件顺序获取服务器状态
+            config = load_server_config()
+            servers = config['servers']
+            ordered_results = []
+            for server_config in servers:
+                host = server_config['host']
+                if host in server_status:
+                    ordered_results.append(server_status[host])
+
             # 发送初始数据
             initial_data = {
                 'type': 'initial_data',
-                'data': list(server_status.values())
+                'data': ordered_results
             }
             yield f"data: {json.dumps(initial_data, ensure_ascii=False)}\n\n"
-            
+            print(f"SSE客户端连接，发送初始数据: {len(ordered_results)} 个服务器")
+
             # 持续监听队列中的消息
+            heartbeat_count = 0
             while True:
                 try:
                     # 设置25秒超时，用于定期心跳（小于30秒以避免超时）
                     message = client_queue.get(timeout=25)
                     yield message
                 except queue.Empty:
+                    # 每2次心跳（约50秒）触发一次服务器更新
+                    heartbeat_count += 1
+                    if heartbeat_count % 2 == 0:
+                        print("SSE心跳触发服务器状态更新")
+                        # 在单独线程中触发更新，避免阻塞SSE流
+                        update_thread = threading.Thread(target=update_all_servers, daemon=True)
+                        update_thread.start()
+
                     # 发送心跳消息保持连接
                     heartbeat = {
                         'type': 'heartbeat',
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': datetime.now().isoformat(),
+                        'update_triggered': heartbeat_count % 2 == 0
                     }
                     yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
-                    
+
         except GeneratorExit:
             # 客户端断开连接
             print("SSE客户端断开连接")
@@ -1659,7 +1742,7 @@ def sse_stream():
                     client_queue.get_nowait()
                 except queue.Empty:
                     break
-    
+
     return Response(generate(), mimetype='text/event-stream',
                    headers={
                        'Cache-Control': 'no-cache',

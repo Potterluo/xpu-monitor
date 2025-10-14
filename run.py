@@ -67,7 +67,7 @@ def check_config():
 
 def main():
     """主函数"""
-    print("=== NPU/GPU 监控平台 ===")
+    print("=== XPU 监控平台 ===")
     print()
 
     # 检查Python版本

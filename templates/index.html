@@ -1,201 +1,1474 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NPU/GPU 监控平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <title>XPU 监控平台</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Preline UI -->
+    <link rel="stylesheet" href="https://preline.co/assets/css/preline.css">
+    <script src="https://preline.co/assets/js/preline.js"></script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- EventSource polyfill for older browsers -->
+    <script src="https://cdn.jsdelivr.net/npm/event-source-polyfill@1.0.26/src/eventsource.min.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom Tailwind Config -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                            950: '#172554'
+                        },
+                        secondary: {
+                            50: '#f8fafc',
+                            100: '#f1f5f9',
+                            200: '#e2e8f0',
+                            300: '#cbd5e1',
+                            400: '#94a3b8',
+                            500: '#64748b',
+                            600: '#475569',
+                            700: '#334155',
+                            800: '#1e293b',
+                            900: '#0f172a',
+                            950: '#020617'
+                        },
+                        success: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            200: '#bbf7d0',
+                            300: '#86efac',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                            950: '#052e16'
+                        },
+                        warning: {
+                            50: '#fffbeb',
+                            100: '#fef3c7',
+                            200: '#fde68a',
+                            300: '#fcd34d',
+                            400: '#fbbf24',
+                            500: '#f59e0b',
+                            600: '#d97706',
+                            700: '#b45309',
+                            800: '#92400e',
+                            900: '#78350f',
+                            950: '#451a03'
+                        },
+                        danger: {
+                            50: '#fef2f2',
+                            100: '#fee2e2',
+                            200: '#fecaca',
+                            300: '#fca5a5',
+                            400: '#f87171',
+                            500: '#ef4444',
+                            600: '#dc2626',
+                            700: '#b91c1c',
+                            800: '#991b1b',
+                            900: '#7f1d1d',
+                            950: '#450a0a'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-in-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'scale-in': 'scaleIn 0.2s ease-out',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0', transform: 'translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' }
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' }
+                        },
+                        scaleIn: {
+                            '0%': { opacity: '0', transform: 'scale(0.95)' },
+                            '100%': { opacity: '1', transform: 'scale(1)' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            @apply bg-gray-100 dark:bg-gray-800;
+        }
+        ::-webkit-scrollbar-thumb {
+            @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            @apply bg-gray-400 dark:bg-gray-500;
+        }
+
+        /* Ensure equal height cards */
+        .grid {
+            grid-auto-rows: 1fr;
+        }
+
+        .card-equal-height {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* Glass morphism effect */
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .glass-dark {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Loading animation */
+        .loader {
+            border: 3px solid rgba(59, 130, 246, 0.1);
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Smooth transitions */
+        * {
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+    </style>
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>NPU/GPU 监控平台</h1>
-            <div class="controls">
-                <button id="refreshBtn" class="btn">手动刷新</button>
-                <button id="configBtn" class="btn btn-secondary">服务器配置</button>
-                <span id="lastUpdate" class="last-update"></span>
-            </div>
-        </header>
 
-        <main>
-            <div id="servers" class="servers-grid">
-                <!-- 服务器卡片将通过JavaScript动态生成 -->
-            </div>
-        </main>
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 min-h-screen font-sans flex flex-col">
 
-        <footer>
-            <p>实时监控您的NPU/GPU设备状态 | 每30秒自动更新</p>
-        </footer>
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 border-b border-gray-200 dark:border-gray-700">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+                <!-- Logo and Title -->
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-microchip text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 dark:text-white">XPU 监控平台</h1>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">实时性能监控平台</p>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center space-x-4">
+                    <!-- Refresh Button -->
+                    <button id="refreshBtn" class="relative group">
+                        <div class="absolute inset-0 bg-primary-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-sync-alt text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">刷新</span>
+                        </div>
+                    </button>
+
+                    <!-- Settings Button -->
+                    <button id="configBtn" class="relative group">
+                        <div class="absolute inset-0 bg-secondary-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-cog text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">配置</span>
+                        </div>
+                    </button>
+
+                    <!-- Mock Data Button (Development Only) -->
+                    <button id="mockDataBtn" class="relative group" style="display: none;">
+                        <div class="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-flask text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">模拟数据</span>
+                        </div>
+                    </button>
+
+                    <!-- Theme Toggle -->
+                    <button id="themeToggle" class="relative group">
+                        <div class="absolute inset-0 bg-gray-700 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-moon text-gray-700 dark:text-yellow-400 group-hover:text-white" id="themeIcon"></i>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8 flex-1">
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-primary-100 dark:bg-primary-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-server text-primary-600 dark:text-primary-400 text-xs"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="totalServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">服务器总数</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-success-100 dark:bg-success-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-check-circle text-success-600 dark:text-success-400 text-xs"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="onlineServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">正常运行</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-warning-100 dark:bg-warning-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-exclamation-triangle text-warning-600 dark:text-warning-400 text-xs"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="offlineServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">连接异常</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-danger-100 dark:bg-danger-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-microchip text-danger-600 dark:text-danger-400 text-xs"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="totalDevices">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">NPU/GPU 总数</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Server Cards Grid -->
+        <div id="servers" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 auto-rows-max">
+            <!-- Server cards will be dynamically inserted here -->
+        </div>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-xl p-8 flex flex-col items-center">
+            <div class="loader mb-4"></div>
+            <p class="text-gray-700 dark:text-gray-300">正在连接服务器...</p>
+        </div>
     </div>
 
-    <!-- 加载提示 -->
-    <div id="loading" class="loading">
-        <div class="spinner"></div>
-        <p>正在连接服务器...</p>
-    </div>
-
-    <!-- 配置模态框 -->
-    <div id="configModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>服务器配置管理</h2>
-                <span class="close">&times;</span>
+    <!-- Configuration Modal -->
+    <div id="configModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+            <div class="bg-gradient-to-r from-primary-500 to-primary-600 text-white p-6">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold">服务器配置管理</h2>
+                    <button id="closeModal" class="text-white hover:text-gray-200 transition-colors">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
             </div>
-            <div class="modal-body">
-                <div class="config-section">
-                    <h3>添加新服务器</h3>
-                    <form id="addServerForm">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="serverName">服务器名称:</label>
-                                <input type="text" id="serverName" name="name" required>
+
+            <div class="p-6 overflow-y-auto max-h-[70vh]">
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">添加新服务器</h3>
+                    <form id="addServerForm" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">服务器名称</label>
+                                <input type="text" id="serverName" name="name" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                             </div>
-                            <div class="form-group">
-                                <label for="serverHost">主机地址:</label>
-                                <input type="text" id="serverHost" name="host" required>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">主机地址</label>
+                                <input type="text" id="serverHost" name="host" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                             </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="serverType">设备类型:</label>
-                                <select id="serverType" name="type" required>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">设备类型</label>
+                                <select id="serverType" name="type" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                     <option value="gpu">GPU</option>
                                     <option value="npu">NPU</option>
                                 </select>
                             </div>
-                            <div class="form-group">
-                                <label>
-                                    <input type="checkbox" id="isLocal" name="local">
-                                    本地机器
+                            <div class="flex items-center">
+                                <label class="flex items-center">
+                                    <input type="checkbox" id="isLocal" name="local" class="rounded text-primary-600 focus:ring-primary-500">
+                                    <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">本地机器</span>
                                 </label>
                             </div>
                         </div>
-                        <div id="remoteFields" class="remote-fields" style="display: none;">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="serverPort">SSH端口:</label>
-                                    <input type="number" id="serverPort" name="port" value="22">
+
+                        <!-- Remote fields will be dynamically shown/hidden -->
+                        <div id="remoteFields" class="space-y-4">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SSH端口</label>
+                                    <input type="number" id="serverPort" name="port" value="22"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                 </div>
-                                <div class="form-group">
-                                    <label for="authType">认证方式:</label>
-                                    <select id="authType" name="authType" onchange="toggleAuthFields()">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">认证方式</label>
+                                    <select id="authType" name="authType" onchange="toggleAuthFields()"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                         <option value="password">密码认证</option>
                                         <option value="key">密钥认证</option>
                                     </select>
                                 </div>
                             </div>
 
-                            <!-- 密码认证字段 -->
-                            <div id="passwordAuthFields" class="auth-fields">
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="serverUsername">用户名:</label>
-                                        <input type="text" id="serverUsername" name="username">
+                            <!-- Password auth fields -->
+                            <div id="passwordAuthFields" class="space-y-4">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">用户名</label>
+                                        <input type="text" id="serverUsername" name="username"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                     </div>
-                                    <div class="form-group">
-                                        <label for="serverPassword">密码:</label>
-                                        <input type="password" id="serverPassword" name="password">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密码</label>
+                                        <input type="password" id="serverPassword" name="password"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- 密钥认证字段 -->
-                            <div id="keyAuthFields" class="auth-fields" style="display: none;">
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="keyUsername">用户名:</label>
-                                        <input type="text" id="keyUsername" name="keyUsername">
+                            <!-- Key auth fields -->
+                            <div id="keyAuthFields" class="space-y-4 hidden">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">用户名</label>
+                                        <input type="text" id="keyUsername" name="keyUsername"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                     </div>
-                                    <div class="form-group">
-                                        <label for="keyFile">密钥文件路径:</label>
-                                        <input type="text" id="keyFile" name="keyFile" placeholder="/path/to/private_key">
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label for="keyPassword">密钥密码 (可选):</label>
-                                    <input type="password" id="keyPassword" name="keyPassword" placeholder="如果密钥有密码则填写">
-                                </div>
-                            </div>
-
-                            <!-- 跳板机配置 -->
-                            <div class="form-group">
-                                <label>
-                                    <input type="checkbox" id="useBastion" name="useBastion" onchange="toggleBastionFields()">
-                                    使用跳板机
-                                </label>
-                            </div>
-
-                            <div id="bastionFields" class="bastion-fields" style="display: none;">
-                                <h4>跳板机配置</h4>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="bastionHost">跳板机地址:</label>
-                                        <input type="text" id="bastionHost" name="bastionHost">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="bastionPort">跳板机端口:</label>
-                                        <input type="number" id="bastionPort" name="bastionPort" value="22">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密钥文件路径</label>
+                                        <input type="text" id="keyFile" name="keyFile" placeholder="/path/to/private_key"
+                                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                     </div>
                                 </div>
-
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="bastionAuthType">跳板机认证方式:</label>
-                                        <select id="bastionAuthType" name="bastionAuthType" onchange="toggleBastionAuthFields()">
-                                            <option value="password">密码认证</option>
-                                            <option value="key">密钥认证</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <!-- 跳板机密码认证 -->
-                                <div id="bastionPasswordFields" class="auth-fields">
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label for="bastionUsername">跳板机用户名:</label>
-                                            <input type="text" id="bastionUsername" name="bastionUsername">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="bastionPassword">跳板机密码:</label>
-                                            <input type="password" id="bastionPassword" name="bastionPassword">
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- 跳板机密钥认证 -->
-                                <div id="bastionKeyFields" class="auth-fields" style="display: none;">
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label for="bastionKeyUsername">跳板机用户名:</label>
-                                            <input type="text" id="bastionKeyUsername" name="bastionKeyUsername">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="bastionKeyFile">跳板机密钥文件:</label>
-                                            <input type="text" id="bastionKeyFile" name="bastionKeyFile" placeholder="/path/to/bastion_key">
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="bastionKeyPassword">跳板机密钥密码 (可选):</label>
-                                        <input type="password" id="bastionKeyPassword" name="bastionKeyPassword">
-                                    </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">密钥密码 (可选)</label>
+                                    <input type="password" id="keyPassword" name="keyPassword" placeholder="如果密钥有密码则填写"
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                                 </div>
                             </div>
                         </div>
-                        <button type="submit" class="btn">添加服务器</button>
+
+                        <div class="flex justify-end space-x-4">
+                            <button type="button" onclick="closeConfigModal()" class="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                取消
+                            </button>
+                            <button type="submit" class="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
+                                添加服务器
+                            </button>
+                        </div>
                     </form>
                 </div>
 
-                <div class="config-section">
-                    <h3>现有服务器</h3>
-                    <div id="serverList" class="server-list">
-                        <!-- 服务器列表将通过JavaScript动态生成 -->
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">现有服务器</h3>
+                    <div id="serverList" class="space-y-3">
+                        <!-- Server list will be dynamically inserted here -->
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-auto">
+        <div class="container mx-auto px-4 py-4 text-center">
+            <p class="text-gray-500 dark:text-gray-400 text-sm">
+                © 2025 XPU监控平台.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Global variables
+        let eventSource;
+        let servers = {};
+        let isDarkMode = false;
+        let reconnectAttempts = 0;
+        let maxReconnectAttempts = 15;
+        let reconnectDelay = 1000;
+        let reconnectTimer = null;
+
+        // DOM elements
+        const serversContainer = document.getElementById('servers');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const configBtn = document.getElementById('configBtn');
+        const mockDataBtn = document.getElementById('mockDataBtn');
+        const themeToggle = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const configModal = document.getElementById('configModal');
+        const closeModal = document.getElementById('closeModal');
+        const loadingDiv = document.getElementById('loading');
+        const addServerForm = document.getElementById('addServerForm');
+        const serverList = document.getElementById('serverList');
+        const isLocalCheckbox = document.getElementById('isLocal');
+        const remoteFields = document.getElementById('remoteFields');
+
+        // Initialize theme
+        function initTheme() {
+            if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+                isDarkMode = true;
+                themeIcon.classList.remove('fa-moon');
+                themeIcon.classList.add('fa-sun');
+            } else {
+                document.documentElement.classList.remove('dark');
+                isDarkMode = false;
+                themeIcon.classList.remove('fa-sun');
+                themeIcon.classList.add('fa-moon');
+            }
+        }
+
+        // Toggle theme
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            if (isDarkMode) {
+                document.documentElement.classList.add('dark');
+                localStorage.theme = 'dark';
+                themeIcon.classList.remove('fa-moon');
+                themeIcon.classList.add('fa-sun');
+            } else {
+                document.documentElement.classList.remove('dark');
+                localStorage.theme = 'light';
+                themeIcon.classList.remove('fa-sun');
+                themeIcon.classList.add('fa-moon');
+            }
+        }
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            initTheme();
+            initializeSSE();
+            setupEventListeners();
+            updateStats();
+
+            // Check if development environment and show mock data button
+            checkDevelopmentEnvironment();
+
+            // Set default state - show remote fields with password auth
+            isLocalCheckbox.checked = false;
+            remoteFields.style.display = 'block';
+            document.getElementById('authType').value = 'password';
+            toggleAuthFields();
+        });
+
+        // Initialize SSE connection
+        function initializeSSE() {
+            console.log('正在连接SSE流...');
+            hideLoading();
+            
+            // 关闭现有的连接
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/sse');
+
+            eventSource.onopen = function(event) {
+                console.log('SSE连接已建立');
+                reconnectAttempts = 0;
+                reconnectDelay = 1000;
+                hideLoading();
+
+                // 清除任何现有的重连定时器
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    // console.log('接收到SSE消息:', data.type);
+
+                    switch (data.type) {
+                        case 'initial_data':
+                            console.log('接收到初始数据，服务器数量:', data.data.length);
+                            updateServers(data.data);
+                            break;
+                        case 'server_update':
+                            console.log('服务器更新:', data.data.name);
+                            updateServer(data.data);
+                            break;
+                        case 'servers_refreshed':
+                            // console.log('接收到服务器列表刷新，服务器数量:', data.data.length);
+                            updateServers(data.data);
+                            break;
+                        case 'heartbeat':
+                            // 心跳消息，保持连接活跃
+                            // console.log('收到心跳');
+                            break;
+                        default:
+                            console.log('未知消息类型:', data.type);
+                    }
+                } catch (e) {
+                    console.error('解析SSE消息失败:', e, event.data);
+                }
+            };
+
+            eventSource.onerror = function(event) {
+                console.error('SSE连接错误:', event);
+                scheduleReconnect();
+            };
+        }
+
+        // Schedule reconnection
+        function scheduleReconnect() {
+            // 清除现有定时器
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+            }
+
+            // 如果达到最大重连次数，停止尝试
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                showLoading('连接失败，请刷新页面重试');
+                return;
+            }
+
+            // 显示重连提示
+            if (reconnectAttempts === 0) {
+                showLoading('SSE连接中断，正在重连...');
+            }
+
+            // 设置重连定时器
+            reconnectTimer = setTimeout(() => {
+                reconnectAttempts++;
+
+                // 指数退避策略，但设置最大延迟为30秒
+                const delay = Math.min(reconnectDelay * Math.pow(1.5, reconnectAttempts - 1), 30000);
+
+                console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})，延迟: ${delay}ms`);
+
+                // 重新初始化SSE连接
+                initializeSSE();
+
+                reconnectDelay = delay;
+            }, reconnectDelay);
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            refreshBtn.addEventListener('click', function() {
+                refreshData();
+            });
+
+            configBtn.addEventListener('click', function() {
+                openConfigModal();
+            });
+
+            mockDataBtn.addEventListener('click', function() {
+                loadMockData();
+            });
+
+            closeModal.addEventListener('click', function() {
+                closeConfigModal();
+            });
+
+            themeToggle.addEventListener('click', toggleTheme);
+
+            // Local machine checkbox
+            isLocalCheckbox.addEventListener('change', function() {
+                toggleRemoteFields();
+            });
+
+            // Add server form
+            addServerForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                addServer();
+            });
+
+            // Close modal on outside click
+            configModal.addEventListener('click', function(e) {
+                if (e.target === configModal) {
+                    closeConfigModal();
+                }
+            });
+        }
+
+        // Toggle remote fields
+        function toggleRemoteFields() {
+            if (isLocalCheckbox.checked) {
+                remoteFields.style.display = 'none';
+                clearAllFields();
+            } else {
+                remoteFields.style.display = 'block';
+            }
+        }
+
+        // Clear all form fields
+        function clearAllFields() {
+            document.getElementById('serverPort').value = '22';
+            document.getElementById('serverUsername').value = '';
+            document.getElementById('serverPassword').value = '';
+            document.getElementById('keyUsername').value = '';
+            document.getElementById('keyFile').value = '';
+            document.getElementById('keyPassword').value = '';
+            document.getElementById('authType').value = 'password';
+            toggleAuthFields();
+        }
+
+        // Toggle auth fields
+        function toggleAuthFields() {
+            const authType = document.getElementById('authType').value;
+            const passwordFields = document.getElementById('passwordAuthFields');
+            const keyFields = document.getElementById('keyAuthFields');
+
+            if (authType === 'password') {
+                passwordFields.style.display = 'block';
+                keyFields.style.display = 'none';
+            } else {
+                passwordFields.style.display = 'none';
+                keyFields.style.display = 'block';
+            }
+        }
+
+        // Create server card
+        function createServerCard(serverData) {
+            const card = document.createElement('div');
+            card.className = 'bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 flex flex-col h-full';
+            card.id = `server-${serverData.host}`;
+
+            const statusConfig = getStatusConfig(serverData.status);
+            const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+            const deviceCount = serverData.devices ? serverData.devices.length : 0;
+
+            card.innerHTML = `
+                <div class="p-4 flex-1 flex flex-col h-full">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-8 h-8 ${statusConfig.bgColor} rounded-lg flex items-center justify-center">
+                                <i class="${statusConfig.icon} ${statusConfig.iconColor} text-sm"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-900 dark:text-white text-sm">${serverData.name}</h3>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">${serverData.host}</p>
+                            </div>
+                        </div>
+                        <span class="px-2 py-1 text-xs font-medium ${statusConfig.bgColor} ${statusConfig.textColor} rounded-full">
+                            ${statusConfig.text}
+                        </span>
+                    </div>
+
+                    <!-- Content area -->
+                    <div class="flex-1 flex flex-col space-y-3">
+                        <!-- All GPUs Memory Usage -->
+                        <div class="flex-1">
+                            ${renderAllDevicesCompact(serverData)}
+                        </div>
+
+                        <!-- Storage Usage -->
+                        <div>
+                            ${renderStorageCompact(serverData)}
+                        </div>
+                    </div>
+
+                    <!-- Bottom Info -->
+                    <div class="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span>${deviceType} (${deviceCount}卡)</span>
+                            <span>${serverData.last_update || '-'}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            serversContainer.appendChild(card);
+        }
+
+        // Render all devices compact version (individual memory bars for each device)
+        function renderAllDevicesCompact(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-spinner fa-spin text-blue-500 text-xl mb-2"></i><p class="text-xs text-blue-500">连接中...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-xl mb-2"></i><p class="text-xs text-gray-500 dark:text-gray-400">离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-exclamation-circle text-red-500 text-xl mb-2"></i><p class="text-xs text-red-500">${serverData.error || '错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-xl mb-2"></i><p class="text-xs text-gray-500 dark:text-gray-400">无${deviceType}设备</p></div>`;
+            }
+
+            // Process each device to get memory percentage
+            const deviceData = serverData.devices.map(device => {
+                const memoryUsage = device.memory_usage || 'N/A';
+                let memoryPercent = 0;
+                let memoryText = memoryUsage;
+
+                if (memoryUsage !== 'N/A' && memoryUsage.includes('/')) {
+                    const parts = memoryUsage.split('/');
+                    const used = parseInt(parts[0]);
+                    const total = parseInt(parts[1]);
+                    if (!isNaN(used) && !isNaN(total) && total > 0) {
+                        memoryPercent = Math.round((used / total) * 100);
+                        memoryText = memoryUsage;
+                    }
+                }
+
+                return {
+                    ...device,
+                    memoryPercent,
+                    memoryText
+                };
+            });
+
+            const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+
+            return `
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 flex-1">
+                    <div class="space-y-2">
+                        ${deviceData.map(device => {
+                            const memoryColor = device.memoryPercent > 90 ? 'bg-red-500' : device.memoryPercent > 70 ? 'bg-yellow-500' : 'bg-green-500';
+                            return `
+                                <!-- ${deviceType}${device.id} Memory Usage -->
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs">
+                                        <span class="font-medium text-gray-900 dark:text-white">${deviceType}${device.id}</span>
+                                        <span class="text-gray-600 dark:text-gray-400">${device.memoryText}</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5">
+                                        <div class="${memoryColor} h-1.5 rounded-full transition-all duration-300" style="width: ${device.memoryPercent}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render devices compact version (single card view for modal)
+        function renderDevicesCompact(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-2"><i class="fas fa-spinner fa-spin text-blue-500 text-lg mb-1"></i><p class="text-xs text-blue-500">连接中...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-2"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-lg mb-1"></i><p class="text-xs text-gray-500 dark:text-gray-400">离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-2"><i class="fas fa-exclamation-circle text-red-500 text-lg mb-1"></i><p class="text-xs text-red-500">${serverData.error || '错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-2"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-lg mb-1"></i><p class="text-xs text-gray-500 dark:text-gray-400">无${deviceType}</p></div>`;
+            }
+
+            return serverData.devices.map(device => {
+                // Extract memory usage percentage for progress bar
+                const memoryUsage = device.memory_usage || 'N/A';
+                let memoryPercent = 0;
+                let memoryText = memoryUsage;
+
+                if (memoryUsage !== 'N/A' && memoryUsage.includes('/')) {
+                    const parts = memoryUsage.split('/');
+                    const used = parseInt(parts[0]);
+                    const total = parseInt(parts[1]);
+                    if (!isNaN(used) && !isNaN(total) && total > 0) {
+                        memoryPercent = Math.round((used / total) * 100);
+                        memoryText = `${memoryPercent}%`;
+                    }
+                }
+
+                const memoryColor = memoryPercent > 90 ? 'bg-red-500' : memoryPercent > 70 ? 'bg-yellow-500' : 'bg-green-500';
+
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-gray-900 dark:text-white">${serverData.type === 'npu' ? 'NPU' : 'GPU'} ${device.id}</span>
+                            <span class="text-xs ${getTempClass(device.temp)}">${device.temp || 'N/A'}</span>
+                        </div>
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs">
+                                <span class="text-gray-600 dark:text-gray-400">显存</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${memoryText}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5">
+                                <div class="${memoryColor} h-1.5 rounded-full transition-all duration-300" style="width: ${memoryPercent}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render devices (original version for modal)
+        function renderDevices(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-4"><i class="fas fa-spinner fa-spin text-blue-500 text-2xl mb-2"></i><p class="text-sm text-blue-500">正在连接服务器...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-4"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-2xl mb-2"></i><p class="text-sm text-gray-500 dark:text-gray-400">服务器离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-4"><i class="fas fa-exclamation-circle text-red-500 text-2xl mb-2"></i><p class="text-sm text-red-500">${serverData.error || '未知错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-4"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-2xl mb-2"></i><p class="text-sm text-gray-500 dark:text-gray-400">未检测到${deviceType}设备</p></div>`;
+            }
+
+            return serverData.devices.map(device => `
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="font-medium text-gray-900 dark:text-white">${serverData.type === 'npu' ? 'NPU' : 'GPU'} ${device.id}</h4>
+                        <span class="text-sm text-gray-500 dark:text-gray-400">${device.name}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">温度</span>
+                            <span class="font-medium ${getTempClass(device.temp)}">${device.temp || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">功耗</span>
+                            <span class="font-medium">${device.power || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">显存</span>
+                            <span class="font-medium">${device.memory_usage || 'N/A'}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600 dark:text-gray-400">利用率</span>
+                            <span class="font-medium ${getUtilClass(device.utilization)}">${device.utilization || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Render storage information compact version
+        function renderStorageCompact(serverData) {
+            if (!serverData.storage || Object.keys(serverData.storage).length === 0) {
+                return '';
+            }
+
+            // 只显示前两个存储挂载点
+            const storageEntries = Object.entries(serverData.storage).slice(0, 2);
+
+            const storageCards = storageEntries.map(([mountPoint, info]) => {
+                const usagePercent = info.usage_percent || 0;
+                const used = info.used || '0G';
+                const total = info.total || '0G';
+
+                const statusColor =
+                usagePercent > 90
+                    ? 'bg-red-500'
+                    : usagePercent > 80
+                    ? 'bg-yellow-500'
+                    : 'bg-green-500';
+
+                return `
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-2">
+                    <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-medium text-gray-900 dark:text-white flex items-center">
+                        <i class="fas fa-hdd mr-1 text-blue-500 text-xs"></i>
+                        ${mountPoint}
+                    </span>
+                    <span class="text-xs font-medium text-gray-800 dark:text-gray-200">
+                        ${used} / ${total}
+                    </span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1">
+                    <div
+                        class="${statusColor} h-1 rounded-full transition-all duration-300"
+                        style="width: ${usagePercent}%"
+                    ></div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+
+            return storageCards;
+            }
+
+
+        // Render storage information (original version for modal)
+        function renderStorage(serverData) {
+            if (!serverData.storage || Object.keys(serverData.storage).length === 0) {
+                return '';
+            }
+
+            const storageCards = Object.entries(serverData.storage).map(([mountPoint, info]) => {
+                const usagePercent = info.usage_percent || 0;
+                const statusColor = usagePercent > 90 ? 'bg-red-500' : usagePercent > 80 ? 'bg-yellow-500' : 'bg-green-500';
+                const statusIcon = usagePercent > 90 ? 'fa-exclamation-triangle' : usagePercent > 80 ? 'fa-exclamation-circle' : 'fa-check-circle';
+
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fas fa-hdd mr-2 text-blue-500"></i>
+                                ${mountPoint}
+                            </h4>
+                            <i class="fas ${statusIcon} ${statusColor.replace('bg-', 'text-')}"></i>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">使用率</span>
+                                <span class="font-medium ${getUsageClass(usagePercent)}">${usagePercent}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                <div class="${statusColor} h-2 rounded-full transition-all duration-300" style="width: ${usagePercent}%"></div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.used || 'N/A'}</div>
+                                    <div>已用</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.free || 'N/A'}</div>
+                                    <div>可用</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.total || 'N/A'}</div>
+                                    <div>总计</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return storageCards;
+        }
+
+        // Render Docker information
+        function renderDocker(serverData) {
+            if (!serverData.docker || (!serverData.docker.images.length && !serverData.docker.containers.length)) {
+                return '';
+            }
+
+            const docker = serverData.docker;
+            let dockerContent = '';
+
+            // Docker Images Section
+            if (docker.images && docker.images.length > 0) {
+                dockerContent += `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fab fa-docker mr-2 text-blue-500"></i>
+                                Docker 镜像
+                            </h4>
+                            <span class="text-sm text-gray-600 dark:text-gray-400">${docker.images.length} 个镜像</span>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">总大小</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${docker.total_images_size}</span>
+                            </div>
+                            <div class="max-h-32 overflow-y-auto space-y-1">
+                                ${docker.images.slice(0, 3).map(img => `
+                                    <div class="text-xs text-gray-600 dark:text-gray-400 flex justify-between">
+                                        <span class="truncate mr-2">${img.name}</span>
+                                        <span>${img.size}</span>
+                                    </div>
+                                `).join('')}
+                                ${docker.images.length > 3 ? `<div class="text-xs text-gray-500 italic">...还有 ${docker.images.length - 3} 个镜像</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Docker Containers Section
+            if (docker.containers && docker.containers.length > 0) {
+                const runningCount = docker.containers.filter(c => c.is_running).length;
+                const stoppedCount = docker.containers.length - runningCount;
+
+                dockerContent += `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fab fa-docker mr-2 text-green-500"></i>
+                                Docker 容器
+                            </h4>
+                            <div class="flex space-x-2 text-sm">
+                                <span class="text-green-600 dark:text-green-400">${runningCount} 运行中</span>
+                                <span class="text-gray-600 dark:text-gray-400">${stoppedCount} 已停止</span>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">总大小</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${docker.total_containers_size}</span>
+                            </div>
+                            <div class="max-h-32 overflow-y-auto space-y-1">
+                                ${docker.containers.slice(0, 3).map(container => `
+                                    <div class="text-xs text-gray-600 dark:text-gray-400 flex justify-between items-center">
+                                        <span class="truncate mr-2">${container.name}</span>
+                                        <div class="flex items-center space-x-1">
+                                            <span class="${container.is_running ? 'text-green-500' : 'text-gray-500'}">
+                                                <i class="fas fa-circle text-xs"></i>
+                                            </span>
+                                            <span>${container.size}</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                                ${docker.containers.length > 3 ? `<div class="text-xs text-gray-500 italic">...还有 ${docker.containers.length - 3} 个容器</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return dockerContent;
+        }
+
+        // Get usage class for storage
+        function getUsageClass(usage) {
+            if (usage > 90) return 'text-red-600 dark:text-red-400';
+            if (usage > 80) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-green-600 dark:text-green-400';
+        }
+
+  
+        // Get status configuration
+        function getStatusConfig(status) {
+            const configs = {
+                online: {
+                    text: '在线',
+                    bgColor: 'bg-green-100 dark:bg-green-900',
+                    textColor: 'text-green-800 dark:text-green-200',
+                    icon: 'fas fa-check-circle',
+                    iconColor: 'text-green-600 dark:text-green-400'
+                },
+                offline: {
+                    text: '离线',
+                    bgColor: 'bg-red-100 dark:bg-red-900',
+                    textColor: 'text-red-800 dark:text-red-200',
+                    icon: 'fas fa-times-circle',
+                    iconColor: 'text-red-600 dark:text-red-400'
+                },
+                error: {
+                    text: '错误',
+                    bgColor: 'bg-yellow-100 dark:bg-yellow-900',
+                    textColor: 'text-yellow-800 dark:text-yellow-200',
+                    icon: 'fas fa-exclamation-circle',
+                    iconColor: 'text-yellow-600 dark:text-yellow-400'
+                },
+                connecting: {
+                    text: '连接中',
+                    bgColor: 'bg-blue-100 dark:bg-blue-900',
+                    textColor: 'text-blue-800 dark:text-blue-200',
+                    icon: 'fas fa-spinner fa-spin',
+                    iconColor: 'text-blue-600 dark:text-blue-400'
+                }
+            };
+            return configs[status] || configs.offline;
+        }
+
+        // Get temperature class
+        function getTempClass(temp) {
+            if (!temp) return 'text-gray-500 dark:text-gray-400';
+            const tempValue = parseInt(temp);
+            if (tempValue < 60) return 'text-green-600 dark:text-green-400';
+            if (tempValue < 80) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-red-600 dark:text-red-400';
+        }
+
+        // Get utilization class
+        function getUtilClass(utilization) {
+            if (!utilization) return 'text-gray-500 dark:text-gray-400';
+            const utilValue = parseInt(utilization);
+            if (utilValue < 30) return 'text-blue-600 dark:text-blue-400';
+            if (utilValue < 70) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-red-600 dark:text-red-400';
+        }
+
+        // Update all servers
+        function updateServers(serverDataList) {
+            serversContainer.innerHTML = '';
+            servers = {};
+
+            serverDataList.forEach(serverData => {
+                servers[serverData.host] = serverData;
+                createServerCard(serverData);
+            });
+
+            updateStats();
+            updateLastUpdateTime();
+        }
+
+        // Update single server
+        function updateServer(serverData) {
+            servers[serverData.host] = serverData;
+
+            let serverCard = document.getElementById(`server-${serverData.host}`);
+            if (serverCard) {
+                const newCard = createServerCard(serverData);
+                serverCard.replaceWith(newCard);
+            } else {
+                createServerCard(serverData);
+            }
+
+            updateStats();
+            updateLastUpdateTime();
+        }
+
+        // Update statistics
+        function updateStats() {
+            const serverDataList = Object.values(servers);
+            const onlineCount = serverDataList.filter(s => s.status === 'online').length;
+            const offlineCount = serverDataList.filter(s => s.status === 'offline').length;
+            const totalDevices = serverDataList.reduce((sum, s) => sum + (s.devices ? s.devices.length : 0), 0);
+
+            document.getElementById('totalServers').textContent = serverDataList.length;
+            document.getElementById('onlineServers').textContent = onlineCount;
+            document.getElementById('offlineServers').textContent = offlineCount;
+            document.getElementById('totalDevices').textContent = totalDevices;
+        }
+
+        // Update last update time
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN');
+            document.getElementById('lastUpdate').textContent = `最后更新: ${timeString}`;
+            document.getElementById('lastUpdateInfo').textContent = timeString;
+        }
+
+        // Refresh data
+        async function refreshData() {
+            refreshBtn.disabled = true;
+            const icon = refreshBtn.querySelector('i');
+            icon.classList.add('fa-spin');
+
+            try {
+                const response = await fetch('/api/refresh', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    console.log('手动刷新成功');
+                } else {
+                    console.error('刷新失败');
+                }
+            } catch (error) {
+                console.error('刷新请求失败:', error);
+            } finally {
+                setTimeout(() => {
+                    refreshBtn.disabled = false;
+                    icon.classList.remove('fa-spin');
+                }, 1000);
+            }
+        }
+
+        // Configuration modal functions
+        function openConfigModal() {
+            configModal.classList.remove('hidden');
+            loadServerConfig();
+        }
+
+        function closeConfigModal() {
+            configModal.classList.add('hidden');
+            addServerForm.reset();
+            toggleRemoteFields();
+        }
+
+        // Load server configuration
+        async function loadServerConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                renderServerList(config.servers || []);
+            } catch (error) {
+                console.error('加载服务器配置失败:', error);
+            }
+        }
+
+        // Render server list
+        function renderServerList(servers) {
+            serverList.innerHTML = '';
+
+            if (servers.length === 0) {
+                serverList.innerHTML = '<p class="text-center text-gray-500 dark:text-gray-400 py-8">暂无服务器配置</p>';
+                return;
+            }
+
+            servers.forEach(server => {
+                const serverItem = document.createElement('div');
+                serverItem.className = 'bg-gray-50 dark:bg-gray-700 rounded-lg p-4 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors';
+
+                const localBadge = server.local || server.host === 'localhost' || server.host === '127.0.0.1'
+                    ? '<span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">本地</span>'
+                    : '<span class="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 rounded-full">远程</span>';
+
+                const typeBadge = server.type === 'npu'
+                    ? '<span class="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 rounded-full">NPU</span>'
+                    : '<span class="px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 rounded-full">GPU</span>';
+
+                serverItem.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div>
+                            <h4 class="font-medium text-gray-900 dark:text-white">${server.name}</h4>
+                            <p class="text-sm text-gray-500 dark:text-gray-400">${server.host}</p>
+                        </div>
+                        <div class="flex space-x-2">
+                            ${localBadge}
+                            ${typeBadge}
+                        </div>
+                    </div>
+                    <button onclick="deleteServer('${server.name}')" class="text-red-500 hover:text-red-700 transition-colors">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                `;
+
+                serverList.appendChild(serverItem);
+            });
+        }
+
+        // Add server
+        async function addServer() {
+            const formData = new FormData(addServerForm);
+            const serverData = {
+                name: formData.get('name'),
+                host: formData.get('host'),
+                type: formData.get('type'),
+                local: isLocalCheckbox.checked
+            };
+
+            if (!serverData.local) {
+                serverData.port = parseInt(formData.get('port')) || 22;
+
+                const authType = formData.get('authType');
+                if (authType === 'password') {
+                    serverData.auth = {
+                        type: 'password',
+                        username: formData.get('username'),
+                        password: formData.get('password')
+                    };
+                } else if (authType === 'key') {
+                    serverData.auth = {
+                        type: 'key',
+                        username: formData.get('keyUsername'),
+                        key_file: formData.get('keyFile'),
+                        key_password: formData.get('keyPassword') || null
+                    };
+                }
+            }
+
+            try {
+                const response = await fetch('/api/config/server', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(serverData)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert('服务器添加成功');
+                    closeConfigModal();
+                } else {
+                    alert(`添加失败: ${result.error}`);
+                }
+            } catch (error) {
+                console.error('添加服务器失败:', error);
+                alert('添加服务器失败，请检查网络连接');
+            }
+        }
+
+        // Delete server
+        async function deleteServer(serverName) {
+            if (!confirm(`确定要删除服务器 "${serverName}" 吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/config/server/${encodeURIComponent(serverName)}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert('服务器删除成功');
+                    // 重新加载配置列表
+                    loadServerConfig();
+                } else {
+                    alert(`删除失败: ${result.error}`);
+                }
+            } catch (error) {
+                console.error('删除服务器失败:', error);
+                alert('删除服务器失败，请检查网络连接');
+            }
+        }
+
+        // Check development environment
+        function checkDevelopmentEnvironment() {
+            // Show mock data button only in development environment
+            const isDevelopment = window.location.hostname === 'localhost' ||
+                                 window.location.hostname === '127.0.0.1' ||
+                                 window.location.port === '5000' ||
+                                 window.location.search.includes('dev=true');
+
+            if (isDevelopment) {
+                mockDataBtn.style.display = 'block';
+                console.log('开发环境检测：模拟数据按钮已启用');
+            } else {
+                mockDataBtn.style.display = 'none';
+                console.log('生产环境检测：模拟数据按钮已隐藏');
+            }
+        }
+
+        // Loading functions
+        function showLoading(message = '正在连接服务器...') {
+            loadingDiv.classList.remove('hidden');
+            const loadingText = loadingDiv.querySelector('p');
+            if (loadingText) {
+                loadingText.textContent = message;
+            }
+        }
+
+        function hideLoading() {
+            loadingDiv.classList.add('hidden');
+        }
+
+        // Load mock data for testing
+        async function loadMockData() {
+            mockDataBtn.disabled = true;
+            const icon = mockDataBtn.querySelector('i');
+            icon.classList.add('fa-spin');
+
+            try {
+                const response = await fetch('/api/mock/data');
+                const mockServers = await response.json();
+
+                if (response.ok) {
+                    console.log('加载模拟数据成功:', mockServers);
+                    updateServers(mockServers);
+
+                    // Show success message
+                    showNotification('模拟数据加载成功！显示多台不同配置的测试服务器。', 'success');
+                } else {
+                    console.error('加载模拟数据失败');
+                }
+            } catch (error) {
+                console.error('加载模拟数据请求失败:', error);
+            } finally {
+                setTimeout(() => {
+                    mockDataBtn.disabled = false;
+                    icon.classList.remove('fa-spin');
+                }, 1000);
+            }
+        }
+
+        // Show notification
+        function showNotification(message, type = 'info') {
+            const notificationHtml = `
+                <div id="notification" class="fixed top-4 right-4 z-50 animate-fade-in">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg border-l-4 ${
+                        type === 'success' ? 'border-green-500' :
+                        type === 'error' ? 'border-red-500' :
+                        'border-blue-500'
+                    } p-4 flex items-center space-x-3">
+                        <i class="fas ${
+                            type === 'success' ? 'fa-check-circle text-green-500' :
+                            type === 'error' ? 'fa-exclamation-circle text-red-500' :
+                            'fa-info-circle text-blue-500'
+                        }"></i>
+                        <span class="text-gray-900 dark:text-white">${message}</span>
+                    </div>
+                </div>
+            `;
+
+            // Remove existing notification
+            const existingNotification = document.getElementById('notification');
+            if (existingNotification) {
+                existingNotification.remove();
+            }
+
+            // Add new notification
+            document.body.insertAdjacentHTML('beforeend', notificationHtml);
+
+            // Auto remove after 3 seconds
+            setTimeout(() => {
+                const notification = document.getElementById('notification');
+                if (notification) {
+                    notification.remove();
+                }
+            }, 3000);
+        }
+    </script>
 </body>
 </html>

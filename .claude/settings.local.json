@@ -19,7 +19,9 @@
       "Bash(curl --request POST --url https://api.siliconflow.cn/v1/chat/completions --header 'Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp' --header 'Content-Type: application/json' --data '{\"\"model\"\": \"\"Qwen/Qwen3-8B\"\", \"\"messages\"\": [{\"\"role\"\": \"\"user\"\", \"\"content\"\": \"\"给我3个关于清理磁盘空间的建议\"\"}]}' --connect-timeout 30 --max-time 30)",
       "Bash(curl -s http://localhost:5000/)",
       "Bash(curl -s http://localhost:5000/api/mock/data)",
-      "Bash(python -c \"\nimport json, sys\ndata = json.load(sys.stdin)\nfor server in data:\n    print(f\"\"服务器: {server[''''name'''']} ({server[''''host'''']}) - 类型: {server[''''type'''']} - 设备数: {len(server[''''devices''''])} - 状态: {server[''''status'''']}\"\")\n\")"
+      "Bash(python -c \"\nimport json, sys\ndata = json.load(sys.stdin)\nfor server in data:\n    print(f\"\"服务器: {server[''''name'''']} ({server[''''host'''']}) - 类型: {server[''''type'''']} - 设备数: {len(server[''''devices''''])} - 状态: {server[''''status'''']}\"\")\n\")",
+      "Bash(curl:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []
