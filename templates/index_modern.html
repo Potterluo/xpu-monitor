@@ -911,31 +911,45 @@
                 return '';
             }
 
-            // Show only the first 2 storage devices to save space
+            // 只显示前两个存储挂载点
             const storageEntries = Object.entries(serverData.storage).slice(0, 2);
 
             const storageCards = storageEntries.map(([mountPoint, info]) => {
                 const usagePercent = info.usage_percent || 0;
-                const statusColor = usagePercent > 90 ? 'bg-red-500' : usagePercent > 80 ? 'bg-yellow-500' : 'bg-green-500';
+                const used = info.used || '0G';
+                const total = info.total || '0G';
+
+                const statusColor =
+                usagePercent > 90
+                    ? 'bg-red-500'
+                    : usagePercent > 80
+                    ? 'bg-yellow-500'
+                    : 'bg-green-500';
 
                 return `
-                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-2">
-                        <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs font-medium text-gray-900 dark:text-white flex items-center">
-                                <i class="fas fa-hdd mr-1 text-blue-500 text-xs"></i>
-                                ${mountPoint}
-                            </span>
-                            <span class="text-xs font-medium ${getUsageClass(usagePercent)}">${usagePercent}%</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1">
-                            <div class="${statusColor} h-1 rounded-full transition-all duration-300" style="width: ${usagePercent}%"></div>
-                        </div>
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-2">
+                    <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-medium text-gray-900 dark:text-white flex items-center">
+                        <i class="fas fa-hdd mr-1 text-blue-500 text-xs"></i>
+                        ${mountPoint}
+                    </span>
+                    <span class="text-xs font-medium text-gray-800 dark:text-gray-200">
+                        ${used} / ${total}
+                    </span>
                     </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1">
+                    <div
+                        class="${statusColor} h-1 rounded-full transition-all duration-300"
+                        style="width: ${usagePercent}%"
+                    ></div>
+                    </div>
+                </div>
                 `;
             }).join('');
 
             return storageCards;
-        }
+            }
+
 
         // Render storage information (original version for modal)
         function renderStorage(serverData) {
