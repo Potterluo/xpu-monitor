@@ -15,8 +15,8 @@
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-    <!-- Socket.IO -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <!-- EventSource polyfill for older browsers -->
+    <script src="https://cdn.jsdelivr.net/npm/event-source-polyfill@1.0.26/src/eventsource.min.js"></script>
 
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -444,9 +444,13 @@
 
     <script>
         // Global variables
-        let socket;
+        let eventSource;
         let servers = {};
         let isDarkMode = false;
+        let reconnectAttempts = 0;
+        let maxReconnectAttempts = 15;
+        let reconnectDelay = 1000;
+        let reconnectTimer = null;
 
         // DOM elements
         const serversContainer = document.getElementById('servers');
@@ -497,7 +501,7 @@
         // Initialize application
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
-            initializeSocket();
+            initializeSSE();
             setupEventListeners();
             updateStats();
 
@@ -511,97 +515,99 @@
             toggleAuthFields();
         });
 
-        // Initialize WebSocket connection
-        function initializeSocket() {
-            socket = io({
-                transports: ['websocket', 'polling'],
-                upgrade: true,
-                rememberUpgrade: true,
-                timeout: 10000,
-                forceNew: false
-            });
+        // Initialize SSE connection
+        function initializeSSE() {
+            console.log('正在连接SSE流...');
+            hideLoading();
+            
+            // 关闭现有的连接
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/sse');
 
-            let reconnectAttempts = 0;
-            let loadingTimeout = null;
-
-            socket.on('connect', function() {
-                console.log('已连接到服务器');
+            eventSource.onopen = function(event) {
+                console.log('SSE连接已建立');
                 reconnectAttempts = 0;
+                reconnectDelay = 1000;
                 hideLoading();
-                if (loadingTimeout) {
-                    clearTimeout(loadingTimeout);
-                    loadingTimeout = null;
+
+                // 清除任何现有的重连定时器
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
                 }
-            });
+            };
 
-            socket.on('disconnect', function(reason) {
-                console.log('与服务器断开连接:', reason);
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    // console.log('接收到SSE消息:', data.type);
 
-                // Only show loading for intentional disconnections or long reconnects
-                if (reason === 'io client disconnect') {
-                    showLoading('正在重新连接...');
-                } else {
-                    // For network issues, wait a bit before showing loading
-                    loadingTimeout = setTimeout(() => {
-                        showLoading('网络连接中断，正在重新连接...');
-                    }, 3000);
+                    switch (data.type) {
+                        case 'initial_data':
+                            console.log('接收到初始数据，服务器数量:', data.data.length);
+                            updateServers(data.data);
+                            break;
+                        case 'server_update':
+                            console.log('服务器更新:', data.data.name);
+                            updateServer(data.data);
+                            break;
+                        case 'servers_refreshed':
+                            // console.log('接收到服务器列表刷新，服务器数量:', data.data.length);
+                            updateServers(data.data);
+                            break;
+                        case 'heartbeat':
+                            // 心跳消息，保持连接活跃
+                            // console.log('收到心跳');
+                            break;
+                        default:
+                            console.log('未知消息类型:', data.type);
+                    }
+                } catch (e) {
+                    console.error('解析SSE消息失败:', e, event.data);
                 }
-            });
+            };
 
-            socket.on('reconnect', function(attemptNumber) {
-                console.log('重新连接成功，尝试次数:', attemptNumber);
-                reconnectAttempts = 0;
-                hideLoading();
-                if (loadingTimeout) {
-                    clearTimeout(loadingTimeout);
-                    loadingTimeout = null;
-                }
-            });
+            eventSource.onerror = function(event) {
+                console.error('SSE连接错误:', event);
+                scheduleReconnect();
+            };
+        }
 
-            socket.on('reconnect_attempt', function(attemptNumber) {
-                reconnectAttempts = attemptNumber;
-                console.log(`正在尝试重新连接 (${attemptNumber})...`);
+        // Schedule reconnection
+        function scheduleReconnect() {
+            // 清除现有定时器
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+            }
 
-                // Only show loading after multiple failed attempts
-                if (attemptNumber >= 3 && !loadingTimeout) {
-                    showLoading(`正在重新连接... (${attemptNumber})`);
-                }
-            });
-
-            socket.on('reconnect_error', function(error) {
-                console.error('重新连接失败:', error);
-                if (reconnectAttempts >= 5) {
-                    showLoading('连接失败，请检查网络后刷新页面');
-                }
-            });
-
-            socket.on('reconnect_failed', function() {
-                console.error('重新连接失败，已达到最大重试次数');
+            // 如果达到最大重连次数，停止尝试
+            if (reconnectAttempts >= maxReconnectAttempts) {
                 showLoading('连接失败，请刷新页面重试');
-            });
+                return;
+            }
 
-            socket.on('initial_data', function(data) {
-                console.log('接收到初始数据:', data);
-                updateServers(data);
-            });
+            // 显示重连提示
+            if (reconnectAttempts === 0) {
+                showLoading('SSE连接中断，正在重连...');
+            }
 
-            socket.on('server_update', function(serverData) {
-                console.log('服务器更新:', serverData);
-                updateServer(serverData);
-            });
+            // 设置重连定时器
+            reconnectTimer = setTimeout(() => {
+                reconnectAttempts++;
 
-            socket.on('servers_refreshed', function(data) {
-                console.log('服务器列表已刷新:', data);
-                updateServers(data);
-            });
+                // 指数退避策略，但设置最大延迟为30秒
+                const delay = Math.min(reconnectDelay * Math.pow(1.5, reconnectAttempts - 1), 30000);
 
-            socket.on('connect_error', function(error) {
-                console.error('连接错误:', error);
-                // Don't immediately show loading on connect_error, let reconnection logic handle it
-                if (reconnectAttempts === 0) {
-                    showLoading('连接失败，请刷新页面重试');
-                }
-            });
+                console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})，延迟: ${delay}ms`);
+
+                // 重新初始化SSE连接
+                initializeSSE();
+
+                reconnectDelay = delay;
+            }, reconnectDelay);
         }
 
         // Setup event listeners
@@ -1357,9 +1363,7 @@
 
                 if (response.ok) {
                     alert('服务器删除成功');
-                    // 请求服务器列表刷新
-                    socket.emit('request_servers');
-                    // 同时也重新加载配置列表
+                    // 重新加载配置列表
                     loadServerConfig();
                 } else {
                     alert(`删除失败: ${result.error}`);
@@ -1418,11 +1422,9 @@
                     showNotification('模拟数据加载成功！显示多台不同配置的测试服务器。', 'success');
                 } else {
                     console.error('加载模拟数据失败');
-                    showNotification('加载模拟数据失败', 'error');
                 }
             } catch (error) {
                 console.error('加载模拟数据请求失败:', error);
-                showNotification('加载模拟数据失败，请检查网络连接', 'error');
             } finally {
                 setTimeout(() => {
                     mockDataBtn.disabled = false;

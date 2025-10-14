@@ -7,20 +7,6 @@
       "local": true,
       "enable_storage_monitoring": true,
       "enable_docker_monitoring": true
-    },
-    {
-      "name": "主机1",
-      "host": "192.168.0.1",
-      "type": "npu",
-      "local": false,
-      "port": 22,
-      "enable_storage_monitoring": true,
-      "enable_docker_monitoring": true,
-      "auth": {
-        "type": "password",
-        "username": "root",
-        "password": "123456"
-      }
     }
   ],
   "llm_config": {

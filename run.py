@@ -17,7 +17,7 @@ def check_python_version():
 def check_dependencies():
     """检查依赖包"""
     required_packages = [
-        'flask', 'flask_socketio', 'paramiko', 'eventlet'
+        'flask', 'paramiko', 'requests'
     ]
 
     missing_packages = []
@@ -96,8 +96,8 @@ def main():
 
     try:
         # 导入并启动应用
-        from app import socketio, app
-        socketio.run(app, host='0.0.0.0', port=5090, debug=False)
+        from app import app
+        app.run(host='0.0.0.0', port=5090, debug=False)
     except KeyboardInterrupt:
         print("\n服务已停止")
     except Exception as e:

@@ -1,5 +1,4 @@
-from flask import Flask, render_template, jsonify, request
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, jsonify, request, Response
 import paramiko
 import json
 import threading
@@ -11,13 +10,19 @@ import re
 import socket
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+import queue
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'npu-gpu-monitor-secret'
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 全局变量存储服务器状态
 server_status = {}
+
+# SSE客户端管理
+sse_clients = set()  # 存储所有SSE客户端的队列
+sse_clients_lock = threading.Lock()  # 保护sse_clients的锁
 
 def load_server_config():
     """加载服务器配置"""
@@ -203,14 +208,18 @@ def ssh_connect(host, port, auth_config, bastion_config=None):
                     host, port=port,
                     username=auth_config['username'],
                     pkey=private_key,
-                    timeout=5
+                    timeout=10,
+                    banner_timeout=10,
+                    auth_timeout=10
                 )
             else:
                 ssh.connect(
                     host, port=port,
                     username=auth_config['username'],
                     password=password,
-                    timeout=5
+                    timeout=10,
+                    banner_timeout=10,
+                    auth_timeout=10
                 )
 
             print(f"SSH连接成功: {host}:{port}")
@@ -258,7 +267,9 @@ def ssh_connect_via_bastion(ssh, target_host, target_port, auth_config, bastion_
                 port=bastion_config.get('port', 22),
                 username=bastion_config['auth']['username'],
                 pkey=bastion_private_key,
-                timeout=5
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10
             )
         else:
             bastion_ssh.connect(
@@ -266,7 +277,9 @@ def ssh_connect_via_bastion(ssh, target_host, target_port, auth_config, bastion_
                 port=bastion_config.get('port', 22),
                 username=bastion_config['auth']['username'],
                 password=bastion_password,
-                timeout=5
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10
             )
 
         print(f"跳板机连接成功: {bastion_config['host']}")
@@ -288,14 +301,18 @@ def ssh_connect_via_bastion(ssh, target_host, target_port, auth_config, bastion_
                 '127.0.0.1', port=channel,
                 username=auth_config['username'],
                 pkey=private_key,
-                timeout=5
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10
             )
         else:
             ssh.connect(
                 '127.0.0.1', port=channel,
                 username=auth_config['username'],
                 password=password,
-                timeout=5
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10
             )
 
         # 关闭跳板机连接，但保持通道开启
@@ -310,7 +327,7 @@ def ssh_connect_via_bastion(ssh, target_host, target_port, auth_config, bastion_
             ssh.close()
         return None
 
-def execute_command(ssh, command, timeout=8):
+def execute_command(ssh, command, timeout=10):
     """执行远程命令"""
     try:
         stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
@@ -328,15 +345,15 @@ def execute_command(ssh, command, timeout=8):
         print(f"执行命令失败: {e}")
         return None, error_msg
 
-def execute_local_command(command):
+def execute_local_command(command, timeout=15):
     """执行本地命令"""
     try:
         if platform.system() == 'Windows':
             # Windows系统使用shell=True
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
         else:
             # Linux/Unix系统
-            result = subprocess.run(command.split(), capture_output=True, text=True, timeout=30)
+            result = subprocess.run(command.split(), capture_output=True, text=True, timeout=timeout)
 
         return result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -1125,41 +1142,158 @@ def get_server_info(server_config):
             'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
+def update_single_server(server_config):
+    """更新单个服务器状态 - 用于并发执行"""
+    server_name = server_config.get('name', 'Unknown')
+    server_host = server_config.get('host', 'Unknown')
+    
+    try:
+        print(f"开始更新服务器: {server_name} ({server_host})")
+        server_info = get_server_info(server_config)
+        print(f"服务器更新完成: {server_name} ({server_host}) - 状态: {server_info.get('status', 'unknown')}")
+        return server_config['host'], server_info, None
+    except Exception as e:
+        error_msg = str(e)
+        print(f"更新服务器状态失败 {server_name} ({server_host}): {error_msg}")
+        # 创建错误状态
+        error_info = {
+            'name': server_name,
+            'host': server_host,
+            'status': 'error',
+            'error': error_msg,
+            'type': server_config.get('type', 'gpu'),
+            'devices': [],
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'local': server_config.get('local', False)
+        }
+        return server_config['host'], error_info, error_msg
+
 def update_all_servers():
-    """更新所有服务器状态"""
-    config = load_server_config()
-
-    for server_config in config['servers']:
-        try:
-            server_info = get_server_info(server_config)
-            server_status[server_config['host']] = server_info
-
-            # 通过WebSocket推送更新
-            socketio.emit('server_update', server_info)
-        except Exception as e:
-            print(f"更新服务器状态失败 {server_config['name']}: {e}")
-            # 创建错误状态
-            error_info = {
-                'name': server_config['name'],
-                'host': server_config['host'],
+    """并发更新所有服务器状态"""
+    print("开始更新所有服务器状态...")
+    
+    try:
+        config = load_server_config()
+        servers = config['servers']
+        
+        if not servers:
+            # 即使没有服务器，也要发送空数据以保持连接活跃
+            broadcast_to_sse_clients({
+                'type': 'servers_refreshed',
+                'data': []
+            })
+            print("没有配置服务器，发送空数据")
+            return
+        
+        # 使用线程池并发获取服务器状态
+        max_workers = min(len(servers), 6)  # 限制最大并发数为6，避免过多连接
+        
+        print(f"开始并发更新 {len(servers)} 个服务器，使用 {max_workers} 个线程")
+        
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ServerUpdate") as executor:
+            # 提交所有任务
+            future_to_server = {
+                executor.submit(update_single_server, server_config): server_config
+                for server_config in servers
+            }
+            
+            # 收集所有结果，设置超时时间
+            results = []
+            timeout_count = 0
+            
+            for future in as_completed(future_to_server, timeout=60):  # 60秒超时
+                server_config = future_to_server[future]
+                try:
+                    host, server_info, error = future.result(timeout=5)  # 5秒超时
+                    server_status[host] = server_info
+                    results.append(server_info)
+                    status = server_info.get('status', 'unknown')
+                    print(f"服务器 {server_info.get('name', 'Unknown')} 更新完成: {status}")
+                    
+                except Exception as e:
+                    timeout_count += 1
+                    server_name = server_config.get('name', 'Unknown')
+                    server_host = server_config.get('host', 'Unknown')
+                    print(f"处理服务器 {server_name} ({server_host}) 的结果时出错: {e}")
+                    error_info = {
+                        'name': server_name,
+                        'host': server_host,
+                        'status': 'error',
+                        'error': f'处理超时或异常: {str(e)}',
+                        'type': server_config.get('type', 'gpu'),
+                        'devices': [],
+                        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'local': server_config.get('local', False)
+                    }
+                    server_status[server_config['host']] = error_info
+                    results.append(error_info)
+            
+            # 处理超时的任务
+            if timeout_count > 0:
+                print(f"有 {timeout_count} 个服务器更新任务超时")
+        
+        # 批量发送所有服务器更新
+        print(f"所有服务器更新完成，共 {len(results)} 个服务器")
+        broadcast_to_sse_clients({
+            'type': 'servers_refreshed',
+            'data': list(server_status.values())
+        })
+        
+    except Exception as e:
+        print(f"更新所有服务器状态时发生错误: {e}")
+        # 发送错误信息给客户端
+        broadcast_to_sse_clients({
+            'type': 'servers_refreshed',
+            'data': [{
+                'name': '系统',
+                'host': 'system',
                 'status': 'error',
-                'error': str(e),
-                'type': server_config.get('type', 'gpu'),
+                'error': f'更新服务器列表时发生错误: {str(e)}',
+                'type': 'system',
                 'devices': [],
                 'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'local': server_config.get('local', False)
-            }
-            server_status[server_config['host']] = error_info
-            socketio.emit('server_update', error_info)
+                'local': True
+            }]
+        })
+
+def broadcast_to_sse_clients(data):
+    """向所有SSE客户端广播数据"""
+    if not sse_clients:
+        return
+        
+    message = f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    
+    # 使用锁保护对sse_clients的访问
+    with sse_clients_lock:
+        clients_copy = sse_clients.copy()
+    
+    disconnected_clients = set()
+    for client_queue in clients_copy:
+        try:
+            client_queue.put(message, block=False)
+        except queue.Full:
+            print(f"SSE客户端队列已满，跳过消息: {data.get('type', 'unknown')}")
+        except Exception as e:
+            print(f"向SSE客户端发送数据失败: {e}")
+            disconnected_clients.add(client_queue)
+    
+    # 清理断开连接的客户端
+    if disconnected_clients:
+        with sse_clients_lock:
+            for client in disconnected_clients:
+                sse_clients.discard(client)
 
 def background_update():
     """后台定时更新"""
+    print("后台更新线程已启动")
     while True:
         try:
+            print(f"开始后台定时更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             update_all_servers()
+            print(f"后台定时更新完成: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         except Exception as e:
             print(f"后台更新失败: {e}")
-        time.sleep(15)  # 每15秒更新一次，提高响应速度
+        time.sleep(30)  # 每30秒更新一次，与SSE客户端同步
 
 @app.route('/')
 def index():
@@ -1186,14 +1320,16 @@ def get_server(host):
 @app.route('/api/refresh', methods=['POST'])
 def refresh_servers():
     """手动刷新服务器状态"""
-    # 重新加载配置文件并更新所有服务器状态
-    update_all_servers()
-
-    # 通过WebSocket通知所有客户端服务器状态更新
-    socketio.emit('servers_refreshed', list(server_status.values()))
-    print("手动刷新完成，已通知所有客户端更新服务器状态")
-
-    return jsonify({'message': '刷新完成'})
+    print("收到手动刷新请求")
+    
+    try:
+        # 重新加载配置文件并更新所有服务器状态
+        update_all_servers()
+        print("手动刷新完成")
+        return jsonify({'message': '刷新完成'})
+    except Exception as e:
+        print(f"手动刷新失败: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -1249,27 +1385,14 @@ def add_server():
         config['servers'].append(server_config)
 
         if save_server_config(config):
-            # 先保存配置，然后异步获取服务器状态
             print(f"服务器配置已保存: {server_config['name']}")
 
-            # 立即通过WebSocket通知客户端配置已更新
-            # 创建一个临时的服务器状态，显示为"连接中"
-            temp_server_info = {
-                'name': server_config['name'],
-                'host': server_config['host'],
-                'status': 'connecting',
-                'type': server_config.get('type', 'gpu'),
-                'devices': [],
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'local': server_config.get('local', False)
-            }
-
-            # 立即添加到服务器状态中
-            server_status[server_config['host']] = temp_server_info
-
-            # 立即通知客户端
-            socketio.emit('servers_refreshed', list(server_status.values()))
-            print(f"已立即通知所有客户端新增服务器: {server_config['name']}")
+            # 立即通知客户端配置已更新
+            broadcast_to_sse_clients({
+                'type': 'servers_refreshed',
+                'data': list(server_status.values())
+            })
+            print(f"已通知所有客户端服务器配置更新: {server_config['name']}")
 
             # 在后台线程中获取详细的服务器状态
             def update_server_status():
@@ -1277,8 +1400,11 @@ def add_server():
                     print(f"开始在后台获取服务器状态: {server_config['name']}")
                     server_info = get_server_info(server_config)
                     server_status[server_config['host']] = server_info
-                    # 再次通知客户端更新状态
-                    socketio.emit('servers_refreshed', list(server_status.values()))
+                    # 通知客户端更新状态
+                    broadcast_to_sse_clients({
+                        'type': 'servers_refreshed',
+                        'data': list(server_status.values())
+                    })
                     print(f"服务器状态更新完成: {server_config['name']} - {server_info['status']}")
                 except Exception as e:
                     print(f"获取服务器状态失败: {server_config['name']} - {e}")
@@ -1294,7 +1420,10 @@ def add_server():
                         'local': server_config.get('local', False)
                     }
                     server_status[server_config['host']] = error_info
-                    socketio.emit('servers_refreshed', list(server_status.values()))
+                    broadcast_to_sse_clients({
+                        'type': 'servers_refreshed',
+                        'data': list(server_status.values())
+                    })
 
             # 启动后台线程
             update_thread = threading.Thread(target=update_server_status, daemon=True)
@@ -1312,7 +1441,6 @@ def delete_server(name):
     """删除服务器"""
     try:
         config = load_server_config()
-        original_count = len(config['servers'])
 
         # 在删除前找到要删除的服务器
         server_to_delete = None
@@ -1333,11 +1461,11 @@ def delete_server(name):
                 del server_status[server_to_delete['host']]
                 print(f"从内存中删除服务器: {server_to_delete['name']} ({server_to_delete['host']})")
 
-            # 重新加载所有服务器状态（强制刷新）
-            update_all_servers()
-
-            # 通过WebSocket通知所有客户端服务器状态更新
-            socketio.emit('servers_refreshed', list(server_status.values()))
+            # 通过SSE通知所有客户端服务器状态更新
+            broadcast_to_sse_clients({
+                'type': 'servers_refreshed',
+                'data': list(server_status.values())
+            })
             print(f"已通知所有客户端刷新服务器列表，当前服务器数量: {len(server_status)}")
 
             return jsonify({'message': '服务器删除成功'})
@@ -1482,6 +1610,64 @@ def update_llm_config():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sse')
+def sse_stream():
+    """SSE流式接口"""
+    def generate():
+        # 为每个客户端创建一个队列，设置最大容量以避免内存泄漏
+        client_queue = Queue(maxsize=100)
+        
+        # 添加客户端到集合
+        with sse_clients_lock:
+            sse_clients.add(client_queue)
+        
+        try:
+            # 发送初始数据
+            initial_data = {
+                'type': 'initial_data',
+                'data': list(server_status.values())
+            }
+            yield f"data: {json.dumps(initial_data, ensure_ascii=False)}\n\n"
+            
+            # 持续监听队列中的消息
+            while True:
+                try:
+                    # 设置25秒超时，用于定期心跳（小于30秒以避免超时）
+                    message = client_queue.get(timeout=25)
+                    yield message
+                except queue.Empty:
+                    # 发送心跳消息保持连接
+                    heartbeat = {
+                        'type': 'heartbeat',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
+                    
+        except GeneratorExit:
+            # 客户端断开连接
+            print("SSE客户端断开连接")
+        except Exception as e:
+            print(f"SSE流生成异常: {e}")
+        finally:
+            # 清理客户端队列
+            with sse_clients_lock:
+                sse_clients.discard(client_queue)
+            # 清空队列中的剩余消息
+            while not client_queue.empty():
+                try:
+                    client_queue.get_nowait()
+                except queue.Empty:
+                    break
+    
+    return Response(generate(), mimetype='text/event-stream',
+                   headers={
+                       'Cache-Control': 'no-cache',
+                       'Connection': 'keep-alive',
+                       'Access-Control-Allow-Origin': '*',
+                       'Access-Control-Allow-Headers': 'Cache-Control',
+                       'X-Accel-Buffering': 'no'  # 禁用nginx缓冲
+                   })
 
 @app.route('/api/mock/data', methods=['GET'])
 def get_mock_data():
@@ -1730,24 +1916,6 @@ def get_mock_data():
 
     return jsonify(mock_servers)
 
-@socketio.on('connect')
-def handle_connect():
-    """客户端连接时发送当前状态"""
-    emit('initial_data', list(server_status.values()))
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """客户端断开连接"""
-    print("客户端断开连接")
-
-@socketio.on('request_servers')
-def handle_request_servers():
-    """客户端请求刷新服务器列表"""
-    print(f"收到客户端请求刷新服务器列表，当前服务器数量: {len(server_status)}")
-    server_list = list(server_status.values())
-    print(f"发送服务器列表给客户端，包含服务器: {[s['name'] for s in server_list]}")
-    emit('servers_refreshed', server_list)
-
 if __name__ == '__main__':
     # 初始化数据
     update_all_servers()
@@ -1757,4 +1925,4 @@ if __name__ == '__main__':
     update_thread.start()
 
     # 启动服务器
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
