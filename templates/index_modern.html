@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NPU/GPU 智能监控平台</title>
+    <title>NPU/GPU 监控平台</title>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -139,6 +139,17 @@
             @apply bg-gray-400 dark:bg-gray-500;
         }
 
+        /* Ensure equal height cards */
+        .grid {
+            grid-auto-rows: 1fr;
+        }
+
+        .card-equal-height {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
         /* Glass morphism effect */
         .glass {
             background: rgba(255, 255, 255, 0.1);
@@ -186,7 +197,7 @@
                         <i class="fas fa-microchip text-white"></i>
                     </div>
                     <div>
-                        <h1 class="text-xl font-bold text-gray-900 dark:text-white">NPU/GPU 智能监控</h1>
+                        <h1 class="text-xl font-bold text-gray-900 dark:text-white">XPU 监控平台</h1>
                         <p class="text-xs text-gray-500 dark:text-gray-400">实时性能监控平台</p>
                     </div>
                 </div>
@@ -211,6 +222,15 @@
                         </div>
                     </button>
 
+                    <!-- Mock Data Button (Development Only) -->
+                    <button id="mockDataBtn" class="relative group" style="display: none;">
+                        <div class="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
+                        <div class="relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 flex items-center space-x-2 hover:shadow-lg transition-all duration-300">
+                            <i class="fas fa-flask text-gray-700 dark:text-gray-300 group-hover:text-white"></i>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-white">模拟数据</span>
+                        </div>
+                    </button>
+
                     <!-- Theme Toggle -->
                     <button id="themeToggle" class="relative group">
                         <div class="absolute inset-0 bg-gray-700 rounded-lg scale-0 group-hover:scale-100 transition-transform duration-300"></div>
@@ -226,54 +246,58 @@
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8 flex-1">
         <!-- Stats Overview -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-12 h-12 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
-                        <i class="fas fa-server text-primary-600 dark:text-primary-400"></i>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-primary-100 dark:bg-primary-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-server text-primary-600 dark:text-primary-400 text-xs"></i>
                     </div>
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">总计</span>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="totalServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">服务器总数</p>
+                    </div>
                 </div>
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="totalServers">0</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-400">服务器总数</p>
             </div>
 
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-12 h-12 bg-success-100 dark:bg-success-900 rounded-lg flex items-center justify-center">
-                        <i class="fas fa-check-circle text-success-600 dark:text-success-400"></i>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-success-100 dark:bg-success-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-check-circle text-success-600 dark:text-success-400 text-xs"></i>
                     </div>
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">在线</span>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="onlineServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">正常运行</p>
+                    </div>
                 </div>
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="onlineServers">0</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-400">正常运行</p>
             </div>
 
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-12 h-12 bg-warning-100 dark:bg-warning-900 rounded-lg flex items-center justify-center">
-                        <i class="fas fa-exclamation-triangle text-warning-600 dark:text-warning-400"></i>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-warning-100 dark:bg-warning-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-exclamation-triangle text-warning-600 dark:text-warning-400 text-xs"></i>
                     </div>
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">离线</span>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="offlineServers">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">连接异常</p>
+                    </div>
                 </div>
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="offlineServers">0</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-400">连接异常</p>
             </div>
 
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-shadow duration-300">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-12 h-12 bg-danger-100 dark:bg-danger-900 rounded-lg flex items-center justify-center">
-                        <i class="fas fa-microchip text-danger-600 dark:text-danger-400"></i>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-300">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 bg-danger-100 dark:bg-danger-900 rounded flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-microchip text-danger-600 dark:text-danger-400 text-xs"></i>
                     </div>
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">设备</span>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" id="totalDevices">0</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 truncate">NPU/GPU 总数</p>
+                    </div>
                 </div>
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-white" id="totalDevices">0</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-400">NPU/GPU 总数</p>
             </div>
         </div>
 
         <!-- Server Cards Grid -->
-        <div id="servers" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div id="servers" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 auto-rows-max">
             <!-- Server cards will be dynamically inserted here -->
         </div>
     </main>
@@ -428,6 +452,7 @@
         const serversContainer = document.getElementById('servers');
         const refreshBtn = document.getElementById('refreshBtn');
         const configBtn = document.getElementById('configBtn');
+        const mockDataBtn = document.getElementById('mockDataBtn');
         const themeToggle = document.getElementById('themeToggle');
         const themeIcon = document.getElementById('themeIcon');
         const configModal = document.getElementById('configModal');
@@ -475,6 +500,9 @@
             initializeSocket();
             setupEventListeners();
             updateStats();
+
+            // Check if development environment and show mock data button
+            checkDevelopmentEnvironment();
 
             // Set default state - show remote fields with password auth
             isLocalCheckbox.checked = false;
@@ -586,6 +614,10 @@
                 openConfigModal();
             });
 
+            mockDataBtn.addEventListener('click', function() {
+                loadMockData();
+            });
+
             closeModal.addEventListener('click', function() {
                 closeConfigModal();
             });
@@ -651,46 +683,49 @@
         // Create server card
         function createServerCard(serverData) {
             const card = document.createElement('div');
-            card.className = 'bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1';
+            card.className = 'bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 flex flex-col h-full';
             card.id = `server-${serverData.host}`;
 
             const statusConfig = getStatusConfig(serverData.status);
             const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
-            const locationBadge = serverData.local ?
-                '<span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">本地</span>' :
-                '<span class="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 rounded-full">远程</span>';
+            const deviceCount = serverData.devices ? serverData.devices.length : 0;
 
             card.innerHTML = `
-                <div class="p-6">
+                <div class="p-4 flex-1 flex flex-col h-full">
                     <!-- Header -->
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-10 h-10 ${statusConfig.bgColor} rounded-lg flex items-center justify-center">
-                                <i class="${statusConfig.icon} ${statusConfig.iconColor}"></i>
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-8 h-8 ${statusConfig.bgColor} rounded-lg flex items-center justify-center">
+                                <i class="${statusConfig.icon} ${statusConfig.iconColor} text-sm"></i>
                             </div>
                             <div>
-                                <h3 class="font-semibold text-gray-900 dark:text-white">${serverData.name}</h3>
-                                <p class="text-sm text-gray-500 dark:text-gray-400">${serverData.host}</p>
+                                <h3 class="font-semibold text-gray-900 dark:text-white text-sm">${serverData.name}</h3>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">${serverData.host}</p>
                             </div>
                         </div>
-                        <div class="flex flex-col items-end space-y-1">
-                            <span class="px-2 py-1 text-xs font-medium ${statusConfig.bgColor} ${statusConfig.textColor} rounded-full">
-                                ${statusConfig.text}
-                            </span>
-                            ${locationBadge}
+                        <span class="px-2 py-1 text-xs font-medium ${statusConfig.bgColor} ${statusConfig.textColor} rounded-full">
+                            ${statusConfig.text}
+                        </span>
+                    </div>
+
+                    <!-- Content area -->
+                    <div class="flex-1 flex flex-col space-y-3">
+                        <!-- All GPUs Memory Usage -->
+                        <div class="flex-1">
+                            ${renderAllDevicesCompact(serverData)}
+                        </div>
+
+                        <!-- Storage Usage -->
+                        <div>
+                            ${renderStorageCompact(serverData)}
                         </div>
                     </div>
 
-                    <!-- Devices -->
-                    <div class="space-y-3">
-                        ${renderDevices(serverData)}
-                    </div>
-
-                    <!-- Footer -->
-                    <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <!-- Bottom Info -->
+                    <div class="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700">
                         <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                            <span>${deviceType} 设备</span>
-                            <span>更新于 ${serverData.last_update || '-'}</span>
+                            <span>${deviceType} (${deviceCount}卡)</span>
+                            <span>${serverData.last_update || '-'}</span>
                         </div>
                     </div>
                 </div>
@@ -699,7 +734,131 @@
             serversContainer.appendChild(card);
         }
 
-        // Render devices
+        // Render all devices compact version (individual memory bars for each device)
+        function renderAllDevicesCompact(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-spinner fa-spin text-blue-500 text-xl mb-2"></i><p class="text-xs text-blue-500">连接中...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-xl mb-2"></i><p class="text-xs text-gray-500 dark:text-gray-400">离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-exclamation-circle text-red-500 text-xl mb-2"></i><p class="text-xs text-red-500">${serverData.error || '错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-4 flex-1 flex items-center justify-center"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-xl mb-2"></i><p class="text-xs text-gray-500 dark:text-gray-400">无${deviceType}设备</p></div>`;
+            }
+
+            // Process each device to get memory percentage
+            const deviceData = serverData.devices.map(device => {
+                const memoryUsage = device.memory_usage || 'N/A';
+                let memoryPercent = 0;
+                let memoryText = memoryUsage;
+
+                if (memoryUsage !== 'N/A' && memoryUsage.includes('/')) {
+                    const parts = memoryUsage.split('/');
+                    const used = parseInt(parts[0]);
+                    const total = parseInt(parts[1]);
+                    if (!isNaN(used) && !isNaN(total) && total > 0) {
+                        memoryPercent = Math.round((used / total) * 100);
+                        memoryText = memoryUsage;
+                    }
+                }
+
+                return {
+                    ...device,
+                    memoryPercent,
+                    memoryText
+                };
+            });
+
+            const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+
+            return `
+                <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 flex-1">
+                    <div class="space-y-2">
+                        ${deviceData.map(device => {
+                            const memoryColor = device.memoryPercent > 90 ? 'bg-red-500' : device.memoryPercent > 70 ? 'bg-yellow-500' : 'bg-green-500';
+                            return `
+                                <!-- ${deviceType}${device.id} Memory Usage -->
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs">
+                                        <span class="font-medium text-gray-900 dark:text-white">${deviceType}${device.id}</span>
+                                        <span class="text-gray-600 dark:text-gray-400">${device.memoryText}</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5">
+                                        <div class="${memoryColor} h-1.5 rounded-full transition-all duration-300" style="width: ${device.memoryPercent}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render devices compact version (single card view for modal)
+        function renderDevicesCompact(serverData) {
+            if (serverData.status === 'connecting') {
+                return '<div class="text-center py-2"><i class="fas fa-spinner fa-spin text-blue-500 text-lg mb-1"></i><p class="text-xs text-blue-500">连接中...</p></div>';
+            }
+
+            if (serverData.status === 'offline') {
+                return '<div class="text-center py-2"><i class="fas fa-exclamation-triangle text-gray-400 dark:text-gray-600 text-lg mb-1"></i><p class="text-xs text-gray-500 dark:text-gray-400">离线</p></div>';
+            }
+
+            if (serverData.status === 'error') {
+                return `<div class="text-center py-2"><i class="fas fa-exclamation-circle text-red-500 text-lg mb-1"></i><p class="text-xs text-red-500">${serverData.error || '错误'}</p></div>`;
+            }
+
+            if (!serverData.devices || serverData.devices.length === 0) {
+                const deviceType = serverData.type === 'npu' ? 'NPU' : 'GPU';
+                return `<div class="text-center py-2"><i class="fas fa-microchip text-gray-400 dark:text-gray-600 text-lg mb-1"></i><p class="text-xs text-gray-500 dark:text-gray-400">无${deviceType}</p></div>`;
+            }
+
+            return serverData.devices.map(device => {
+                // Extract memory usage percentage for progress bar
+                const memoryUsage = device.memory_usage || 'N/A';
+                let memoryPercent = 0;
+                let memoryText = memoryUsage;
+
+                if (memoryUsage !== 'N/A' && memoryUsage.includes('/')) {
+                    const parts = memoryUsage.split('/');
+                    const used = parseInt(parts[0]);
+                    const total = parseInt(parts[1]);
+                    if (!isNaN(used) && !isNaN(total) && total > 0) {
+                        memoryPercent = Math.round((used / total) * 100);
+                        memoryText = `${memoryPercent}%`;
+                    }
+                }
+
+                const memoryColor = memoryPercent > 90 ? 'bg-red-500' : memoryPercent > 70 ? 'bg-yellow-500' : 'bg-green-500';
+
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-gray-900 dark:text-white">${serverData.type === 'npu' ? 'NPU' : 'GPU'} ${device.id}</span>
+                            <span class="text-xs ${getTempClass(device.temp)}">${device.temp || 'N/A'}</span>
+                        </div>
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs">
+                                <span class="text-gray-600 dark:text-gray-400">显存</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${memoryText}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5">
+                                <div class="${memoryColor} h-1.5 rounded-full transition-all duration-300" style="width: ${memoryPercent}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render devices (original version for modal)
         function renderDevices(serverData) {
             if (serverData.status === 'connecting') {
                 return '<div class="text-center py-4"><i class="fas fa-spinner fa-spin text-blue-500 text-2xl mb-2"></i><p class="text-sm text-blue-500">正在连接服务器...</p></div>';
@@ -746,6 +905,179 @@
             `).join('');
         }
 
+        // Render storage information compact version
+        function renderStorageCompact(serverData) {
+            if (!serverData.storage || Object.keys(serverData.storage).length === 0) {
+                return '';
+            }
+
+            // Show only the first 2 storage devices to save space
+            const storageEntries = Object.entries(serverData.storage).slice(0, 2);
+
+            const storageCards = storageEntries.map(([mountPoint, info]) => {
+                const usagePercent = info.usage_percent || 0;
+                const statusColor = usagePercent > 90 ? 'bg-red-500' : usagePercent > 80 ? 'bg-yellow-500' : 'bg-green-500';
+
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-2">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fas fa-hdd mr-1 text-blue-500 text-xs"></i>
+                                ${mountPoint}
+                            </span>
+                            <span class="text-xs font-medium ${getUsageClass(usagePercent)}">${usagePercent}%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1">
+                            <div class="${statusColor} h-1 rounded-full transition-all duration-300" style="width: ${usagePercent}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return storageCards;
+        }
+
+        // Render storage information (original version for modal)
+        function renderStorage(serverData) {
+            if (!serverData.storage || Object.keys(serverData.storage).length === 0) {
+                return '';
+            }
+
+            const storageCards = Object.entries(serverData.storage).map(([mountPoint, info]) => {
+                const usagePercent = info.usage_percent || 0;
+                const statusColor = usagePercent > 90 ? 'bg-red-500' : usagePercent > 80 ? 'bg-yellow-500' : 'bg-green-500';
+                const statusIcon = usagePercent > 90 ? 'fa-exclamation-triangle' : usagePercent > 80 ? 'fa-exclamation-circle' : 'fa-check-circle';
+
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fas fa-hdd mr-2 text-blue-500"></i>
+                                ${mountPoint}
+                            </h4>
+                            <i class="fas ${statusIcon} ${statusColor.replace('bg-', 'text-')}"></i>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">使用率</span>
+                                <span class="font-medium ${getUsageClass(usagePercent)}">${usagePercent}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                <div class="${statusColor} h-2 rounded-full transition-all duration-300" style="width: ${usagePercent}%"></div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.used || 'N/A'}</div>
+                                    <div>已用</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.free || 'N/A'}</div>
+                                    <div>可用</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="font-medium text-gray-900 dark:text-white">${info.total || 'N/A'}</div>
+                                    <div>总计</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return storageCards;
+        }
+
+        // Render Docker information
+        function renderDocker(serverData) {
+            if (!serverData.docker || (!serverData.docker.images.length && !serverData.docker.containers.length)) {
+                return '';
+            }
+
+            const docker = serverData.docker;
+            let dockerContent = '';
+
+            // Docker Images Section
+            if (docker.images && docker.images.length > 0) {
+                dockerContent += `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fab fa-docker mr-2 text-blue-500"></i>
+                                Docker 镜像
+                            </h4>
+                            <span class="text-sm text-gray-600 dark:text-gray-400">${docker.images.length} 个镜像</span>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">总大小</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${docker.total_images_size}</span>
+                            </div>
+                            <div class="max-h-32 overflow-y-auto space-y-1">
+                                ${docker.images.slice(0, 3).map(img => `
+                                    <div class="text-xs text-gray-600 dark:text-gray-400 flex justify-between">
+                                        <span class="truncate mr-2">${img.name}</span>
+                                        <span>${img.size}</span>
+                                    </div>
+                                `).join('')}
+                                ${docker.images.length > 3 ? `<div class="text-xs text-gray-500 italic">...还有 ${docker.images.length - 3} 个镜像</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Docker Containers Section
+            if (docker.containers && docker.containers.length > 0) {
+                const runningCount = docker.containers.filter(c => c.is_running).length;
+                const stoppedCount = docker.containers.length - runningCount;
+
+                dockerContent += `
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900 dark:text-white flex items-center">
+                                <i class="fab fa-docker mr-2 text-green-500"></i>
+                                Docker 容器
+                            </h4>
+                            <div class="flex space-x-2 text-sm">
+                                <span class="text-green-600 dark:text-green-400">${runningCount} 运行中</span>
+                                <span class="text-gray-600 dark:text-gray-400">${stoppedCount} 已停止</span>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-600 dark:text-gray-400">总大小</span>
+                                <span class="font-medium text-gray-900 dark:text-white">${docker.total_containers_size}</span>
+                            </div>
+                            <div class="max-h-32 overflow-y-auto space-y-1">
+                                ${docker.containers.slice(0, 3).map(container => `
+                                    <div class="text-xs text-gray-600 dark:text-gray-400 flex justify-between items-center">
+                                        <span class="truncate mr-2">${container.name}</span>
+                                        <div class="flex items-center space-x-1">
+                                            <span class="${container.is_running ? 'text-green-500' : 'text-gray-500'}">
+                                                <i class="fas fa-circle text-xs"></i>
+                                            </span>
+                                            <span>${container.size}</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                                ${docker.containers.length > 3 ? `<div class="text-xs text-gray-500 italic">...还有 ${docker.containers.length - 3} 个容器</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return dockerContent;
+        }
+
+        // Get usage class for storage
+        function getUsageClass(usage) {
+            if (usage > 90) return 'text-red-600 dark:text-red-400';
+            if (usage > 80) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-green-600 dark:text-green-400';
+        }
+
+  
         // Get status configuration
         function getStatusConfig(status) {
             const configs = {
@@ -1024,6 +1356,23 @@
             }
         }
 
+        // Check development environment
+        function checkDevelopmentEnvironment() {
+            // Show mock data button only in development environment
+            const isDevelopment = window.location.hostname === 'localhost' ||
+                                 window.location.hostname === '127.0.0.1' ||
+                                 window.location.port === '5000' ||
+                                 window.location.search.includes('dev=true');
+
+            if (isDevelopment) {
+                mockDataBtn.style.display = 'block';
+                console.log('开发环境检测：模拟数据按钮已启用');
+            } else {
+                mockDataBtn.style.display = 'none';
+                console.log('生产环境检测：模拟数据按钮已隐藏');
+            }
+        }
+
         // Loading functions
         function showLoading(message = '正在连接服务器...') {
             loadingDiv.classList.remove('hidden');
@@ -1035,6 +1384,74 @@
 
         function hideLoading() {
             loadingDiv.classList.add('hidden');
+        }
+
+        // Load mock data for testing
+        async function loadMockData() {
+            mockDataBtn.disabled = true;
+            const icon = mockDataBtn.querySelector('i');
+            icon.classList.add('fa-spin');
+
+            try {
+                const response = await fetch('/api/mock/data');
+                const mockServers = await response.json();
+
+                if (response.ok) {
+                    console.log('加载模拟数据成功:', mockServers);
+                    updateServers(mockServers);
+
+                    // Show success message
+                    showNotification('模拟数据加载成功！显示多台不同配置的测试服务器。', 'success');
+                } else {
+                    console.error('加载模拟数据失败');
+                    showNotification('加载模拟数据失败', 'error');
+                }
+            } catch (error) {
+                console.error('加载模拟数据请求失败:', error);
+                showNotification('加载模拟数据失败，请检查网络连接', 'error');
+            } finally {
+                setTimeout(() => {
+                    mockDataBtn.disabled = false;
+                    icon.classList.remove('fa-spin');
+                }, 1000);
+            }
+        }
+
+        // Show notification
+        function showNotification(message, type = 'info') {
+            const notificationHtml = `
+                <div id="notification" class="fixed top-4 right-4 z-50 animate-fade-in">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg border-l-4 ${
+                        type === 'success' ? 'border-green-500' :
+                        type === 'error' ? 'border-red-500' :
+                        'border-blue-500'
+                    } p-4 flex items-center space-x-3">
+                        <i class="fas ${
+                            type === 'success' ? 'fa-check-circle text-green-500' :
+                            type === 'error' ? 'fa-exclamation-circle text-red-500' :
+                            'fa-info-circle text-blue-500'
+                        }"></i>
+                        <span class="text-gray-900 dark:text-white">${message}</span>
+                    </div>
+                </div>
+            `;
+
+            // Remove existing notification
+            const existingNotification = document.getElementById('notification');
+            if (existingNotification) {
+                existingNotification.remove();
+            }
+
+            // Add new notification
+            document.body.insertAdjacentHTML('beforeend', notificationHtml);
+
+            // Auto remove after 3 seconds
+            setTimeout(() => {
+                const notification = document.getElementById('notification');
+                if (notification) {
+                    notification.remove();
+                }
+            }, 3000);
         }
     </script>
 </body>

@@ -5,7 +5,21 @@
       "Bash(python app.py)",
       "Bash(netstat -ano)",
       "Bash(findstr :5000)",
-      "Bash(pkill -f \"python app.py\")"
+      "Bash(pkill -f \"python app.py\")",
+      "Bash(curl -s http://localhost:5000/api/servers)",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s http://localhost:5000/api/storage/suggestions/127.0.0.1)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -d '{\"\"\"\"hosts\"\"\"\": [\"\"\"\"127.0.0.1\"\"\"\"]}' http://localhost:5000/api/storage/analyze)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -d '{\"\"model\"\": \"\"Qwen/Qwen3-8B\"\", \"\"messages\"\": [{\"\"role\"\": \"\"system\"\", \"\"content\"\": \"\"你是一名专业的系统管理员，擅长存储优化和系统维护。\"\"}, {\"\"role\"\": \"\"user\"\", \"\"content\"\": \"\"C盘使用率86.8%，D盘使用率84.4%，请提供3-5个优化建议\"\"}]}' \"https://api.siliconflow.cn/v1/chat/completions\" -H \"Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp\")",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -d '{\"\"model\"\":\"\"Qwen/Qwen3-8B\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"test\"\"}],\"\"max_tokens\"\":50}' https://api.siliconflow.cn/v1/chat/completions -H \"Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp\" --connect-timeout 10)",
+      "Bash(curl -s http://localhost:5000/api/config/llm)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp\" -d '{\"\"model\"\":\"\"Qwen/Qwen3-8B\"\",\"\"messages\"\":[{\"\"role\"\":\"\"system\"\",\"\"content\"\":\"\"你是一名专业的系统管理员，擅长存储优化和系统维护。\"\"},{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"分析存储使用情况并提供优化建议：\\n\\n存储: C: 260.5GB/300.0GB (86.8%)\\nD: 904.4GB/1.0TB (84.4%)\\nDocker: \\n\\n请提供3-5个实用优化建议，以JSON数组格式返回：\\n[{\\\"\"type\\\"\": \\\"\"critical|warning|info\\\"\", \\\"\"target\\\"\": \\\"\"目标\\\"\", \\\"\"message\\\"\": \\\"\"问题描述\\\"\", \\\"\"actions\\\"\": [\\\"\"命令1\\\"\", \\\"\"命令2\\\"\"], \\\"\"effect\\\"\": \\\"\"预期效果\\\"\", \\\"\"risk\\\"\": \\\"\"风险提示\\\"\"}]\\n\\n建议要具体、可执行、安全。\"\"}],\"\"temperature\"\":0.7}' https://api.siliconflow.cn/v1/chat/completions --connect-timeout 60 --max-time 60)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp\" -d '{\"\"model\"\":\"\"Qwen/Qwen3-8B\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"给我3个关于清理磁盘空间的JSON格式建议，格式：[{\\\"\"type\\\"\": \\\"\"warning\\\"\", \\\"\"target\\\"\": \\\"\"disk\\\"\", \\\"\"message\\\"\": \\\"\"问题描述\\\"\", \\\"\"actions\\\"\": [\\\"\"命令1\\\"\"]}]\"\"}],\"\"temperature\"\":0.7}' https://api.siliconflow.cn/v1/chat/completions --connect-timeout 30 --max-time 30)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp\" -d '{\"\"model\"\":\"\"Qwen/Qwen3-8B\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"给我3个关于清理磁盘空间的建议\"\"}],\"\"temperature\"\":0.7}' https://api.siliconflow.cn/v1/chat/completions --connect-timeout 30 --max-time 30)",
+      "Bash(curl --request POST --url https://api.siliconflow.cn/v1/chat/completions --header 'Authorization: Bearer sk-auxzjlgqgybqsypnsdrkjcgdvbrroopoypbeuajhlekbllhp' --header 'Content-Type: application/json' --data '{\"\"model\"\": \"\"Qwen/Qwen3-8B\"\", \"\"messages\"\": [{\"\"role\"\": \"\"user\"\", \"\"content\"\": \"\"给我3个关于清理磁盘空间的建议\"\"}]}' --connect-timeout 30 --max-time 30)",
+      "Bash(curl -s http://localhost:5000/)",
+      "Bash(curl -s http://localhost:5000/api/mock/data)",
+      "Bash(python -c \"\nimport json, sys\ndata = json.load(sys.stdin)\nfor server in data:\n    print(f\"\"服务器: {server[''''name'''']} ({server[''''host'''']}) - 类型: {server[''''type'''']} - 设备数: {len(server[''''devices''''])} - 状态: {server[''''status'''']}\"\")\n\")"
     ],
     "deny": [],
     "ask": []

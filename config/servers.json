@@ -4,7 +4,9 @@
       "name": "本地",
       "host": "127.0.0.1",
       "type": "gpu",
-      "local": true
+      "local": true,
+      "enable_storage_monitoring": true,
+      "enable_docker_monitoring": true
     },
     {
       "name": "主机1",
@@ -12,11 +14,19 @@
       "type": "npu",
       "local": false,
       "port": 22,
+      "enable_storage_monitoring": true,
+      "enable_docker_monitoring": true,
       "auth": {
         "type": "password",
         "username": "root",
         "password": "123456"
       }
     }
-  ]
+  ],
+  "llm_config": {
+    "enabled": false,
+    "api_url": "",
+    "api_key": "",
+    "model": ""
+  }
 }
