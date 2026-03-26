@@ -481,8 +481,10 @@ def parse_nvidia_smi(output):
             i += 1
             continue
 
-        # 排除表头和分隔符
-        if '----' in line or 'NVIDIA-SMI' in line or '+=====' in line:
+        # 排除表头和分隔符（更严格的过滤）
+        if ('----' in line or 'NVIDIA-SMI' in line or '+=====' in line or
+            '+---' in line or 'GPU  Name' in line or 'Fan  Temp' in line or
+            'Processes:' in line or 'GPU   GI' in line):
             i += 1
             continue
 
@@ -500,8 +502,9 @@ def parse_nvidia_smi(output):
                 gpu_main_info = gpu_parts[0]
                 print(f"GPU主要信息: {gpu_main_info}")
 
-                # 提取GPU ID和名称
-                id_name_match = re.match(r'(\d+)\s+([A-Za-z0-9\s\-]+?)(?:\s+(WDDM|TCC|On|Off))?$', gpu_main_info)
+                # 提取GPU ID和名称 - 修复正则表达式
+                # 匹配: "0  NVIDIA H100 80GB HBM3          On"
+                id_name_match = re.match(r'(\d+)\s+([A-Za-z0-9\s\-]+?)(?:\s+(On|Off))?$', gpu_main_info)
                 if not id_name_match:
                     print(f"无法提取GPU ID和名称: {gpu_main_info}")
                     i += 1
@@ -542,12 +545,24 @@ def parse_nvidia_smi(output):
                 print(f"温度: {temperature}")
 
                 # === 提取功耗 Usage / Cap ===
-                power_match = re.search(r'(N/A|[\d\.]+)\s*/\s*([\d\.]+)W', perf_part)
+                # 修复：更宽松的正则表达式来匹配功耗
+                # 示例: "N/A   34C    P0            116W /  700W"
+                # 需要找到类似 "116W /  700W" 或 "N/A /  700W" 的模式
+                power_pattern = r'([N/A]+|[\d\.]+W)\s*/\s*([\d\.]+W|[\d\.]+)'
+                power_match = re.search(power_pattern, perf_part)
                 if power_match:
-                    usage = power_match.group(1)
-                    cap = power_match.group(2)
-                    # 统一格式：N/A / 700W 或 116W / 700W
-                    power_str = f"{usage}W / {cap}W" if usage != 'N/A' else f"N/A / {cap}W"
+                    usage_raw = power_match.group(1)
+                    cap_raw = power_match.group(2)
+
+                    # 清理数据
+                    usage_clean = usage_raw.replace('W', '').strip()
+                    cap_clean = cap_raw.replace('W', '').strip()
+
+                    # 统一格式
+                    if usage_clean == 'N/A' or usage_clean == 'N/A':
+                        power_str = f"N/A / {cap_clean}W"
+                    else:
+                        power_str = f"{usage_clean}W / {cap_clean}W"
                 else:
                     power_str = "N/A / N/A"
                 print(f"功耗: {power_str}")
@@ -577,10 +592,12 @@ def parse_nvidia_smi(output):
                 }
 
                 devices.append(device)
-                print(f"成功解析GPU信息: {device}")
+                print(f"成功解析GPU信息: {device}\n")
 
             except Exception as e:
                 print(f"解析GPU信息失败: {e}, 行: {line}")
+                import traceback
+                traceback.print_exc()
 
         i += 1
 
