@@ -452,7 +452,7 @@ def parse_npu_smi(output):
     return devices
 
 def parse_nvidia_smi(output):
-    """解析nvidia-smi输出"""
+    """解析nvidia-smi输出，支持多卡"""
     if not output:
         return []
 
@@ -463,124 +463,128 @@ def parse_nvidia_smi(output):
     print(output)
     print("=== 结束 ===\n")
 
-    lines = [line.strip() for line in output.split('\n') if line.strip()]
+    lines = [line for line in output.split('\n')]
 
-    # 查找包含 GPU 信息的那一行（通常是包含显卡名称的那一行）
-    gpu_info_line = None
-    for line in lines:
-        # 排除表头和分隔符
-        if '----' in line or 'NVIDIA-SMI' in line:
+    # 查找所有GPU信息块
+    # 每个GPU有固定的4行格式：
+    # |   0  NVIDIA H100 80GB HBM3  ...  | 00000000:18:00.0 Off | ... |
+    # | N/A   34C    P0            116W /  700W | 79101MiB /  81559MiB | ... |
+    # |                                         |                        | ... |
+    # +-----------------------------------------+------------------------+...+
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # 查找GPU信息行（包含ID和名称）
+        if not line or '|' not in line:
+            i += 1
             continue
-        # 匹配以数字开头、包含 "NVIDIA" 的行（如：|   0  NVIDIA GeForce RTX ...）
-        if re.match(r'.*\d+\s+NVIDIA', line) and '|' in line:
-            gpu_info_line = line
-            print(f"找到 GPU 行: {gpu_info_line}")
-            break
 
-    if not gpu_info_line:
-        print("未找到GPU信息行")
-        return devices
+        # 排除表头和分隔符
+        if '----' in line or 'NVIDIA-SMI' in line or '+=====' in line:
+            i += 1
+            continue
 
-    try:
-        # 提取 GPU ID 和名称
-        # 示例: "|   0  NVIDIA GeForce RTX 4060      WDDM  |   00000000:2B:00.0  On |"
-        gpu_parts = [p.strip() for p in gpu_info_line.split('|') if p.strip()]
-        if len(gpu_parts) < 1:
-            print("GPU信息分割失败")
-            return devices
+        # 检查是否是GPU信息行（包含数字ID和NVIDIA）
+        if re.search(r'\|\s*\d+\s+NVIDIA', line):
+            print(f"找到GPU行: {line}")
 
-        gpu_main_info = gpu_parts[0]
-        print(f"GPU主要信息: {gpu_main_info}")
+            try:
+                # 提取 GPU ID 和名称
+                gpu_parts = [p.strip() for p in line.split('|') if p.strip()]
+                if len(gpu_parts) < 1:
+                    i += 1
+                    continue
 
-        # 提取GPU ID和名称
-        id_name_match = re.match(r'(\d+)\s+([A-Za-z0-9\s\-]+?)(?:\s+(WDDM|TCC))?$', gpu_main_info)
-        if not id_name_match:
-            print("无法提取GPU ID和名称")
-            return devices
+                gpu_main_info = gpu_parts[0]
+                print(f"GPU主要信息: {gpu_main_info}")
 
-        gpu_id = id_name_match.group(1)
-        gpu_name = id_name_match.group(2).strip()
-        print(f"GPU ID: {gpu_id}, 名称: {gpu_name}")
+                # 提取GPU ID和名称
+                id_name_match = re.match(r'(\d+)\s+([A-Za-z0-9\s\-]+?)(?:\s+(WDDM|TCC|On|Off))?$', gpu_main_info)
+                if not id_name_match:
+                    print(f"无法提取GPU ID和名称: {gpu_main_info}")
+                    i += 1
+                    continue
 
-        # 查找下一行 —— 性能与功耗等数据
-        try:
-            gpu_line_idx = lines.index(gpu_info_line)
-            if gpu_line_idx + 1 >= len(lines):
-                print("没有后续行可供解析")
-                return devices
+                gpu_id = id_name_match.group(1)
+                gpu_name = id_name_match.group(2).strip()
+                print(f"GPU ID: {gpu_id}, 名称: {gpu_name}")
 
-            usage_line = lines[gpu_line_idx + 1]
-            print(f"性能行: {usage_line}")
-        except (IndexError, ValueError):
-            print("无法获取性能数据行")
-            return devices
+                # 查找下一行 —— 性能与功耗等数据
+                if i + 1 >= len(lines):
+                    print(f"GPU {gpu_id}: 没有后续行可供解析")
+                    i += 1
+                    continue
 
-        # 解析第二行：|  0%   37C    P8            N/A  /  115W |    1609MiB /   8188MiB |      0%      Default |
-        parts = [part.strip() for part in usage_line.split('|')]
-        # 我们关心的是中间三块：
-        # parts[1]: Fan, Temp, Perf, Power
-        # parts[2]: Memory Usage
-        # parts[3]: GPU-Util, Compute M.
+                usage_line = lines[i + 1].strip()
+                print(f"性能行: {usage_line}")
 
-        if len(parts) < 4:
-            print(f"性能行分割后只有 {len(parts)} 部分，不足4部分")
-            return devices
+                # 解析性能数据行
+                parts = [part.strip() for part in usage_line.split('|')]
 
-        perf_part = parts[1]  # "0%   37C    P8            N/A  /  115W"
-        mem_part = parts[2]   # "1609MiB /   8188MiB"
-        util_part = parts[3]  # "0%      Default"
+                if len(parts) < 4:
+                    print(f"GPU {gpu_id}: 性能行分割后只有 {len(parts)} 部分，跳过")
+                    i += 1
+                    continue
 
-        print(f"性能部分: {perf_part}")
-        print(f"显存部分: {mem_part}")
-        print(f"利用率部分: {util_part}")
+                perf_part = parts[1]  # "N/A   34C    P0            116W /  700W"
+                mem_part = parts[2]   # "79101MiB /  81559MiB"
+                util_part = parts[3]  # "0%      Default"
 
-        # === 提取温度 ===
-        temp_match = re.search(r'(\d+)C', perf_part)
-        temperature = f"{temp_match.group(1)}°C" if temp_match else 'N/A'
-        print(f"温度: {temperature}")
+                print(f"性能部分: {perf_part}")
+                print(f"显存部分: {mem_part}")
+                print(f"利用率部分: {util_part}")
 
-        # === 提取功耗 Usage / Cap ===
-        power_match = re.search(r'(N/A|[\d\.]+)\s*/\s*([\d\.]+)W', perf_part)
-        if power_match:
-            usage = power_match.group(1)
-            cap = power_match.group(2)
-            # 统一格式：N/A / 115W 或 25W / 115W
-            power_str = f"{usage} / {cap}W"
-        else:
-            power_str = "N/A / N/A"
-        print(f"功耗: {power_str}")
+                # === 提取温度 ===
+                temp_match = re.search(r'(\d+)C', perf_part)
+                temperature = f"{temp_match.group(1)}°C" if temp_match else 'N/A'
+                print(f"温度: {temperature}")
 
-        # === 提取显存使用 ===
-        mem_match = re.search(r'(\d+)MiB\s*/\s*(\d+)MiB', mem_part)
-        if mem_match:
-            used_mem = mem_match.group(1)
-            total_mem = mem_match.group(2)
-            memory_str = f"{used_mem}MB / {total_mem}MB"
-        else:
-            memory_str = "N/A"
-        print(f"显存: {memory_str}")
+                # === 提取功耗 Usage / Cap ===
+                power_match = re.search(r'(N/A|[\d\.]+)\s*/\s*([\d\.]+)W', perf_part)
+                if power_match:
+                    usage = power_match.group(1)
+                    cap = power_match.group(2)
+                    # 统一格式：N/A / 700W 或 116W / 700W
+                    power_str = f"{usage}W / {cap}W" if usage != 'N/A' else f"N/A / {cap}W"
+                else:
+                    power_str = "N/A / N/A"
+                print(f"功耗: {power_str}")
 
-        # === 提取 GPU 利用率 ===
-        util_match = re.search(r'(\d+)%(?:\s+|$)', util_part)
-        utilization = f"{util_match.group(1)}%" if util_match else 'N/A'
-        print(f"利用率: {utilization}")
+                # === 提取显存使用 ===
+                mem_match = re.search(r'(\d+)MiB\s*/\s*(\d+)MiB', mem_part)
+                if mem_match:
+                    used_mem = mem_match.group(1)
+                    total_mem = mem_match.group(2)
+                    memory_str = f"{used_mem}MB / {total_mem}MB"
+                else:
+                    memory_str = "N/A"
+                print(f"显存: {memory_str}")
 
-        device = {
-            'id': gpu_id,
-            'name': gpu_name,
-            'temp': temperature,
-            'power': power_str,
-            'memory_usage': memory_str,
-            'utilization': utilization
-        }
+                # === 提取 GPU 利用率 ===
+                util_match = re.search(r'(\d+)%(?:\s+|$)', util_part)
+                utilization = f"{util_match.group(1)}%" if util_match else 'N/A'
+                print(f"利用率: {utilization}")
 
-        devices.append(device)
-        print(f"成功解析GPU信息: {device}")
+                device = {
+                    'id': gpu_id,
+                    'name': gpu_name,
+                    'temp': temperature,
+                    'power': power_str,
+                    'memory_usage': memory_str,
+                    'utilization': utilization
+                }
 
-    except Exception as e:
-        print(f"解析GPU信息失败: {e}")
-        print(f"原始数据: GPU行={gpu_info_line}")
+                devices.append(device)
+                print(f"成功解析GPU信息: {device}")
 
+            except Exception as e:
+                print(f"解析GPU信息失败: {e}, 行: {line}")
+
+        i += 1
+
+    print(f"总共解析到 {len(devices)} 个GPU设备")
     return devices
 
 def get_storage_info(ssh=None, is_local=False):
