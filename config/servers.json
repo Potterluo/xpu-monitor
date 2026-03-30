@@ -5,8 +5,13 @@
       "host": "127.0.0.1",
       "type": "gpu",
       "local": true,
-      "enable_storage_monitoring": true,
-      "enable_docker_monitoring": true
+      "storage": {
+        "mounts": [
+          {"path": "/"},
+          {"path": "/home"}
+        ],
+        "endpoints": []
+      }
     },
     {
       "name": "密码登录服务器",
@@ -17,6 +22,17 @@
         "type": "password",
         "username": "root",
         "password": "your_password"
+      },
+      "storage": {
+        "mounts": [
+          {"path": "/", "endpoint": "192.168.0.1"},
+          {"path": "/home"},
+          {"path": "/mnt/fs1", "endpoint": "192.168.0.1"}
+        ],
+        "endpoints": [
+          {"name": "存储网关A", "host": "192.168.0.1"},
+          {"name": "NAS集群", "host": ["192.168.0.10", "192.168.0.11", "192.168.0.12", "192.168.0.13", "192.168.0.14"]}
+        ]
       }
     },
     {
@@ -29,6 +45,16 @@
         "username": "ubuntu",
         "key_file": "/path/to/private_key",
         "key_password": null
+      },
+      "storage": {
+        "mounts": [
+          {"path": "/"},
+          {"path": "/home"}
+        ],
+        "endpoints": [
+          {"name": "存储节点1", "host": "10.0.0.100"},
+          {"name": "NAS集群", "host": ["10.0.0.101", "10.0.0.102", "10.0.0.103", "10.0.0.104", "10.0.0.105"]}
+        ]
       }
     },
     {

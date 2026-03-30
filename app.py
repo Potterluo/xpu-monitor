@@ -14,15 +14,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 import queue
 
+from logger import get_logger, LogTimer, setup_logging
+
+setup_logging(level='INFO')
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'npu-gpu-monitor-secret'
 
-# 全局变量存储服务器状态
-server_status = {}
+log = get_logger('xpu-monitor')
 
-# SSE客户端管理
-sse_clients = set()  # 存储所有SSE客户端的队列
-sse_clients_lock = threading.Lock()  # 保护sse_clients的锁
+server_status = {}
+sse_clients = set()
+sse_clients_lock = threading.Lock()
+
+
 
 def load_server_config():
     """加载服务器配置"""
@@ -59,7 +64,7 @@ def save_server_config(config):
             json.dump(config, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
-        print(f"保存配置文件失败: {e}")
+        log.error(f"保存配置文件失败: {e}")
         return False
 
 def validate_server_config(server):
@@ -222,34 +227,34 @@ def ssh_connect(host, port, auth_config, bastion_config=None):
                     auth_timeout=10
                 )
 
-            print(f"SSH连接成功: {host}:{port}")
+            log.info(f"SSH连接成功: {host}:{port}")
             return ssh
 
     except paramiko.AuthenticationException:
-        print(f"SSH认证失败 {host}:{port}: 用户名或密码/密钥错误")
+        log.warning(f"SSH认证失败 {host}:{port}: 用户名或密码/密钥错误")
         if ssh:
             ssh.close()
         return None
     except paramiko.SSHException as e:
         error_msg = str(e).lower()
         if 'timed out' in error_msg:
-            print(f"SSH连接超时 {host}:{port}")
+            log.warning(f"SSH连接超时 {host}:{port}")
         elif 'connection refused' in error_msg:
-            print(f"SSH连接被拒绝 {host}:{port}: 服务可能未运行或端口被防火墙阻止")
+            log.warning(f"SSH连接被拒绝 {host}:{port}: 服务可能未运行或端口被防火墙阻止")
         elif 'name or service not known' in error_msg or 'nodename nor servname provided' in error_msg:
-            print(f"SSH主机名解析失败 {host}:{port}: 主机名不存在或DNS问题")
+            log.warning(f"SSH主机名解析失败 {host}:{port}: 主机名不存在或DNS问题")
         else:
-            print(f"SSH连接失败 {host}:{port}: {e}")
+            log.warning(f"SSH连接失败 {host}:{port}: {e}")
         if ssh:
             ssh.close()
         return None
     except socket.timeout:
-        print(f"SSH连接超时 {host}:{port}")
+        log.warning(f"SSH连接超时 {host}:{port}")
         if ssh:
             ssh.close()
         return None
     except Exception as e:
-        print(f"SSH连接失败 {host}:{port}: {e}")
+        log.error(f"SSH连接失败 {host}:{port}: {e}")
         if ssh:
             ssh.close()
         return None
@@ -282,7 +287,7 @@ def ssh_connect_via_bastion(ssh, target_host, target_port, auth_config, bastion_
                 auth_timeout=10
             )
 
-        print(f"跳板机连接成功: {bastion_config['host']}")
+        log.info(f"跳板机连接成功: {bastion_config['host']}")
 
         # 第二步：通过跳板机连接到目标主机
         transport = bastion_ssh.get_transport()
@@ -335,7 +340,7 @@ def execute_command(ssh, command, timeout=10):
         error = stderr.read().decode('utf-8')
         return output, error
     except socket.timeout:
-        print(f"命令执行超时: {command}")
+        log.warning(f"命令执行超时: {command}")
         return None, "Command execution timeout"
     except Exception as e:
         error_msg = str(e)
@@ -359,11 +364,11 @@ def execute_local_command(command, timeout=15):
     except subprocess.TimeoutExpired:
         return None, "命令执行超时"
     except Exception as e:
-        print(f"执行本地命令失败: {e}")
+        log.error(f"执行本地命令失败: {e}")
         return None, str(e)
 
 def parse_npu_smi(output):
-    """解析 npu-smi info 输出，支持双行表格结构"""
+    """解析 npu-smi info 输出，支持单芯片和多芯片（如Ascend910双芯）NPU"""
     if not output or not output.strip():
         return []
 
@@ -377,78 +382,113 @@ def parse_npu_smi(output):
             header_idx = i
             break
     if header_idx is None:
-        print("⚠️ 未找到 NPU 表头")
+        log.debug("parse_npu_smi: 未找到 NPU 表头")
         return []
 
-    # 找到数据开始行（+= 分隔线之后）
+    # 找到数据区起始（表头后的分隔线之后）
     data_start_idx = None
     for i in range(header_idx + 1, len(lines)):
-        if lines[i].strip().startswith('+='):
+        if lines[i].strip().startswith('+=') or lines[i].strip().startswith('+=='):
             data_start_idx = i + 1
             break
     if data_start_idx is None:
-        print("⚠️ 未找到数据分隔线")
+        log.debug("parse_npu_smi: 未找到数据分隔线")
         return []
 
-    # === 收集设备数据块（到进程表前停止）===
+    # 收集所有数据行（跳过分隔线），在进程表前停止
     device_lines = []
     for i in range(data_start_idx, len(lines)):
         line = lines[i]
-        # 遇到进程表或其他新表就结束
-        if '+-' in line and 'Process' in line:
+        if ('Process' in line and '+-' in line) or ('NPU     Chip' in line):
             break
-        if line.strip().startswith('|'):
+        if line.strip().startswith('|') and 'NPU' not in line:
             device_lines.append(line)
 
     if len(device_lines) == 0:
-        print("⚠️ 未采集到任何设备行")
+        log.debug("parse_npu_smi: 未采集到任何设备行")
         return []
 
-    # === 按每2行为一组解析 ===
-    i = 0
-    while i + 1 < len(device_lines):
-        line1 = device_lines[i]
-        line2 = device_lines[i + 1]
-        i += 2
+    # === 解析：逐行扫描，识别"上行"（含名称）和"下行"（含Chip/BusId/HBM） ===
+    # 上行格式: | NPU_ID  Name  | Health | Power Temp ... |
+    # 下行格式: | Chip  Phy-ID  | Bus-Id | AICore Memory-Usage HBM-Usage |
 
-        # --- 解析第一行：| 0     910B4 | OK | 87.6        38 ... ---
-        match1 = re.match(r'\|\s*(\d+)\s+([^\|]+?)\s*\|\s*([^|]+?)\s*\|\s*([\d.]+)\s+([\d.]+)', line1)
-        if not match1:
-            print(f"⚠️ 跳过第一行（格式不匹配）: {line1}")
+    i = 0
+    while i < len(device_lines):
+        line = device_lines[i]
+
+        # 跳过分隔线
+        if line.strip().startswith('+=') or line.strip().startswith('+--'):
+            i += 1
             continue
 
-        npu_id = match1.group(1)
-        name = match1.group(2).strip()
-        health = match1.group(3).strip()
-        power = f"{float(match1.group(4)):.2f}W"
-        temperature = f"{match1.group(5)}°C"
+        # 尝试匹配上行（含 NPU 名称）
+        upper_match = re.match(r'\|\s*(\d+)\s+([^\|]+?)\s*\|\s*([^|]+?)\s*\|\s*([\d.-]+)\s+([\d.-]+)', line)
+        if not upper_match:
+            i += 1
+            continue
 
-        # --- 解析第二行：| 0 | BusId | 68   0/0   27252/32768 | ---
-        # 提取 AICore(%)
-        aicore_match = re.search(r'\|\s*\d+\s*\|\s*[^\|]+\s*\|\s*([\d.]+)', line2)
-        utilization = f"{int(float(aicore_match.group(1)))}%" if aicore_match else "0%"
+        npu_id = upper_match.group(1)
+        name = upper_match.group(2).strip()
+        health = upper_match.group(3).strip()
+        power_raw = upper_match.group(4).strip()
+        temperature = upper_match.group(5).strip()
 
-        # 提取 HBM-Usage(MB) —— 最后一个数字对
-        hbm_match = re.search(r'(\d+)\s*/\s*(\d+)\s*\|$', line2)
-        if hbm_match:
-            used = int(hbm_match.group(1))
-            total = int(hbm_match.group(2))
-            memory_usage = f"{used}MB / {total}MB"
+        # 处理无功耗显示的情况（如 "-"）
+        power = f"{float(power_raw):.1f}W" if power_raw != '-' else 'N/A'
+
+        # 查找紧接的下行
+        chip_line = None
+        if i + 1 < len(device_lines):
+            next_line = device_lines[i + 1]
+            if not next_line.strip().startswith('+=') and not next_line.strip().startswith('+--'):
+                chip_line = next_line
+                i += 2
+            else:
+                # 下行是分隔线，跳过
+                i += 1
+                if i + 1 < len(device_lines):
+                    chip_line = device_lines[i]
+                    i += 1
+                else:
+                    i += 1
         else:
-            memory_usage = "N/A"
+            i += 1
 
-        # 构造设备信息
+        # 从下行提取 Chip ID, AICore, HBM
+        chip_id = npu_id
+        utilization = "0%"
+        memory_usage = "N/A"
+
+        if chip_line:
+            # 提取 Phy-ID（下行第二个字段，全局芯片编号）
+            chip_match = re.match(r'\|\s*\d+\s+(\d+)', chip_line)
+            if chip_match:
+                chip_id = chip_match.group(1)
+
+            # 提取 AICore(%)
+            aicore_match = re.search(r'\|\s*\d+\s+\d+\s*\|\s*[^\|]+\s*\|\s*([\d.]+)', chip_line)
+            if aicore_match:
+                utilization = f"{int(float(aicore_match.group(1)))}%"
+
+            # 提取 HBM-Usage(MB) —— 最后一个数字对
+            hbm_match = re.search(r'(\d+)\s*/\s*(\d+)\s*\|?\s*$', chip_line)
+            if hbm_match:
+                used = int(hbm_match.group(1))
+                total = int(hbm_match.group(2))
+                memory_usage = f"{used}MB / {total}MB"
+
         device = {
-            'id': npu_id,
+            'id': chip_id,
             'name': name,
-            'temp': temperature,
+            'temp': f"{temperature}°C" if temperature != '-' else 'N/A',
             'power': power,
             'memory_usage': memory_usage,
             'utilization': utilization,
-            'health': health  # 可选字段
+            'health': health
         }
         devices.append(device)
 
+    log.debug(f"parse_npu_smi: 解析到 {len(devices)} 个NPU设备")
     return devices
 
 def parse_nvidia_smi(output):
@@ -459,115 +499,86 @@ def parse_nvidia_smi(output):
     devices = []
     import re
 
-    print("=== nvidia-smi 原始输出 ===")
-    print(output)
-    print("=== 结束 ===\n")
+    log.debug(f"nvidia-smi 输出长度: {len(output)} 字符")
 
     lines = [line for line in output.split('\n')]
-
-    # 查找所有GPU信息块
-    # 每个GPU有固定的4行格式：
-    # |   0  NVIDIA H100 80GB HBM3  ...  | 00000000:18:00.0 Off | ... |
-    # | N/A   34C    P0            116W /  700W | 79101MiB /  81559MiB | ... |
-    # |                                         |                        | ... |
-    # +-----------------------------------------+------------------------+...+
 
     i = 0
     while i < len(lines):
         line = lines[i].strip()
 
-        # 查找GPU信息行（包含ID和名称）
         if not line or '|' not in line:
             i += 1
             continue
 
-        # 排除表头和分隔符（更严格的过滤）
         if ('----' in line or 'NVIDIA-SMI' in line or '+=====' in line or
             '+---' in line or 'GPU  Name' in line or 'Fan  Temp' in line or
             'Processes:' in line or 'GPU   GI' in line):
             i += 1
             continue
 
-        # 检查是否是GPU信息行（包含数字ID和NVIDIA）
         if re.search(r'\|\s*\d+\s+NVIDIA', line):
-            print(f"找到GPU行: {line}")
+            log.debug(f"找到GPU行: {line}")
 
             try:
-                # 提取 GPU ID 和名称
                 gpu_parts = [p.strip() for p in line.split('|') if p.strip()]
                 if len(gpu_parts) < 1:
                     i += 1
                     continue
 
                 gpu_main_info = gpu_parts[0]
-                print(f"GPU主要信息: {gpu_main_info}")
+                log.debug(f"GPU主要信息: {gpu_main_info}")
 
                 # 提取GPU ID和名称 - 修复正则表达式
                 # 匹配: "0  NVIDIA H100 80GB HBM3          On"
                 id_name_match = re.match(r'(\d+)\s+([A-Za-z0-9\s\-]+?)(?:\s+(On|Off))?$', gpu_main_info)
                 if not id_name_match:
-                    print(f"无法提取GPU ID和名称: {gpu_main_info}")
+                    log.debug(f"无法提取GPU ID和名称: {gpu_main_info}")
                     i += 1
                     continue
 
                 gpu_id = id_name_match.group(1)
                 gpu_name = id_name_match.group(2).strip()
-                print(f"GPU ID: {gpu_id}, 名称: {gpu_name}")
+                log.debug(f"GPU ID: {gpu_id}, 名称: {gpu_name}")
 
-                # 查找下一行 —— 性能与功耗等数据
                 if i + 1 >= len(lines):
-                    print(f"GPU {gpu_id}: 没有后续行可供解析")
+                    log.debug(f"GPU {gpu_id}: 没有后续行可供解析")
                     i += 1
                     continue
 
                 usage_line = lines[i + 1].strip()
-                print(f"性能行: {usage_line}")
+                log.debug(f"性能行: {usage_line}")
 
-                # 解析性能数据行
                 parts = [part.strip() for part in usage_line.split('|')]
 
                 if len(parts) < 4:
-                    print(f"GPU {gpu_id}: 性能行分割后只有 {len(parts)} 部分，跳过")
+                    log.debug(f"GPU {gpu_id}: 性能行分割后只有 {len(parts)} 部分，跳过")
                     i += 1
                     continue
 
-                perf_part = parts[1]  # "N/A   34C    P0            116W /  700W"
-                mem_part = parts[2]   # "79101MiB /  81559MiB"
-                util_part = parts[3]  # "0%      Default"
+                perf_part = parts[1]
+                mem_part = parts[2]
+                util_part = parts[3]
 
-                print(f"性能部分: {perf_part}")
-                print(f"显存部分: {mem_part}")
-                print(f"利用率部分: {util_part}")
+                log.debug(f"性能部分: {perf_part}, 显存部分: {mem_part}, 利用率部分: {util_part}")
 
-                # === 提取温度 ===
                 temp_match = re.search(r'(\d+)C', perf_part)
                 temperature = f"{temp_match.group(1)}°C" if temp_match else 'N/A'
-                print(f"温度: {temperature}")
 
-                # === 提取功耗 Usage / Cap ===
-                # 修复：更宽松的正则表达式来匹配功耗
-                # 示例: "N/A   34C    P0            116W /  700W"
-                # 需要找到类似 "116W /  700W" 或 "N/A /  700W" 的模式
                 power_pattern = r'([N/A]+|[\d\.]+W)\s*/\s*([\d\.]+W|[\d\.]+)'
                 power_match = re.search(power_pattern, perf_part)
                 if power_match:
                     usage_raw = power_match.group(1)
                     cap_raw = power_match.group(2)
-
-                    # 清理数据
                     usage_clean = usage_raw.replace('W', '').strip()
                     cap_clean = cap_raw.replace('W', '').strip()
-
-                    # 统一格式
                     if usage_clean == 'N/A' or usage_clean == 'N/A':
                         power_str = f"N/A / {cap_clean}W"
                     else:
                         power_str = f"{usage_clean}W / {cap_clean}W"
                 else:
                     power_str = "N/A / N/A"
-                print(f"功耗: {power_str}")
 
-                # === 提取显存使用 ===
                 mem_match = re.search(r'(\d+)MiB\s*/\s*(\d+)MiB', mem_part)
                 if mem_match:
                     used_mem = mem_match.group(1)
@@ -575,12 +586,9 @@ def parse_nvidia_smi(output):
                     memory_str = f"{used_mem}MB / {total_mem}MB"
                 else:
                     memory_str = "N/A"
-                print(f"显存: {memory_str}")
 
-                # === 提取 GPU 利用率 ===
                 util_match = re.search(r'(\d+)%(?:\s+|$)', util_part)
                 utilization = f"{util_match.group(1)}%" if util_match else 'N/A'
-                print(f"利用率: {utilization}")
 
                 device = {
                     'id': gpu_id,
@@ -592,83 +600,69 @@ def parse_nvidia_smi(output):
                 }
 
                 devices.append(device)
-                print(f"成功解析GPU信息: {device}\n")
+                log.debug(f"成功解析GPU: {device}")
 
             except Exception as e:
-                print(f"解析GPU信息失败: {e}, 行: {line}")
-                import traceback
-                traceback.print_exc()
+                log.warning(f"解析GPU信息失败: {e}, 行: {line}")
 
         i += 1
 
     print(f"总共解析到 {len(devices)} 个GPU设备")
     return devices
 
-def get_storage_info(ssh=None, is_local=False):
-    """获取存储空间信息"""
+def get_storage_info(ssh=None, is_local=False, mounts=None):
+    """获取存储空间信息 - 支持可配置挂载点"""
     storage_info = {}
 
+    # 确定要检测的挂载点列表
+    if mounts:
+        directories = [m['path'] for m in mounts]
+    else:
+        # 兼容旧配置：默认检测 / 和 /home
+        directories = ['/', '/home']
+
+    if is_local and not mounts and platform.system() == 'Windows':
+        directories = ['C:', 'D:'] if os.path.exists('D:') else ['C:']
+
+    # 构建 path -> endpoint 映射
+    path_endpoint_map = {}
+    if mounts:
+        for m in mounts:
+            if 'endpoint' in m and m['endpoint']:
+                path_endpoint_map[m['path']] = m['endpoint']
+
     try:
-        if is_local:
-            # 本地存储检测
-            # 检测根目录、home目录空间使用情况
-            directories = ['/', '/home']
-            if platform.system() == 'Windows':
-                directories = ['C:', 'D:'] if os.path.exists('D:') else ['C:']
+        for directory in directories:
+            try:
+                if is_local and platform.system() == 'Windows':
+                    command = f'wmic logicaldisk where "DeviceID=\'{directory}\'" get Size,FreeSpace /value'
+                    output, error = execute_local_command(command)
+                    if not error and output:
+                        size_match = re.search(r'Size=(\d+)', output)
+                        free_match = re.search(r'FreeSpace=(\d+)', output)
+                        if size_match and free_match:
+                            total_size = int(size_match.group(1))
+                            free_space = int(free_match.group(1))
+                            used_space = total_size - free_space
+                            usage_percent = (used_space / total_size) * 100 if total_size > 0 else 0
 
-            for directory in directories:
-                try:
-                    if platform.system() == 'Windows':
-                        command = f'wmic logicaldisk where "DeviceID=\'{directory}\'" get Size,FreeSpace /value'
-                        output, error = execute_local_command(command)
-                        if not error and output:
-                            # 解析Windows输出
-                            size_match = re.search(r'Size=(\d+)', output)
-                            free_match = re.search(r'FreeSpace=(\d+)', output)
-                            if size_match and free_match:
-                                total_size = int(size_match.group(1))
-                                free_space = int(free_match.group(1))
-                                used_space = total_size - free_space
-                                usage_percent = (used_space / total_size) * 100 if total_size > 0 else 0
-
-                                storage_info[directory] = {
-                                    'total': format_bytes(total_size),
-                                    'used': format_bytes(used_space),
-                                    'free': format_bytes(free_space),
-                                    'usage_percent': round(usage_percent, 1),
-                                    'status': 'warning' if usage_percent > 85 else 'normal'
-                                }
-                    else:
-                        # Linux系统
+                            info = {
+                                'total': format_bytes(total_size),
+                                'used': format_bytes(used_space),
+                                'free': format_bytes(free_space),
+                                'usage_percent': round(usage_percent, 1),
+                                'status': 'warning' if usage_percent > 85 else 'normal'
+                            }
+                            if directory in path_endpoint_map:
+                                info['endpoint'] = path_endpoint_map[directory]
+                            storage_info[directory] = info
+                else:
+                    # Linux系统（本地或远程）
+                    if is_local:
                         output, error = execute_local_command(f'df -h {directory}')
-                        if not error and output:
-                            lines = output.strip().split('\n')
-                            if len(lines) >= 2:
-                                # 跳过标题行，解析数据行
-                                data = lines[1].split()
-                                if len(data) >= 6:
-                                    total = data[1]
-                                    used = data[2]
-                                    available = data[3]
-                                    usage = data[4].replace('%', '')
+                    else:
+                        output, error = execute_command(ssh, f'df -h {directory}')
 
-                                    storage_info[directory] = {
-                                        'total': total,
-                                        'used': used,
-                                        'free': available,
-                                        'usage_percent': int(usage),
-                                        'status': 'warning' if int(usage) > 85 else 'normal'
-                                    }
-                except Exception as e:
-                    print(f"检测目录 {directory} 失败: {e}")
-                    continue
-        else:
-            # 远程存储检测
-            directories = ['/', '/home']
-            for directory in directories:
-                try:
-                    command = f'df -h {directory}'
-                    output, error = execute_command(ssh, command)
                     if not error and output:
                         lines = output.strip().split('\n')
                         if len(lines) >= 2:
@@ -679,143 +673,132 @@ def get_storage_info(ssh=None, is_local=False):
                                 available = data[3]
                                 usage = data[4].replace('%', '')
 
-                                storage_info[directory] = {
+                                info = {
                                     'total': total,
                                     'used': used,
                                     'free': available,
                                     'usage_percent': int(usage),
                                     'status': 'warning' if int(usage) > 85 else 'normal'
                                 }
-                except Exception as e:
-                    print(f"远程检测目录 {directory} 失败: {e}")
-                    continue
+                                if directory in path_endpoint_map:
+                                    info['endpoint'] = path_endpoint_map[directory]
+                                storage_info[directory] = info
+            except Exception as e:
+                log.warning(f"检测目录 {directory} 失败: {e}")
+                continue
 
     except Exception as e:
-        print(f"获取存储信息失败: {e}")
+        log.error(f"获取存储信息失败: {e}")
 
     return storage_info
 
-def get_docker_info(ssh=None, is_local=False):
-    """获取Docker镜像和容器信息"""
-    docker_info = {
-        'images': [],
-        'containers': [],
-        'total_images_size': '0B',
-        'total_containers_size': '0B'
-    }
+def expand_endpoint_host(host_spec):
+    """展开端点主机规格，支持多种格式：
+    - 字符串单个IP: "192.168.0.1"
+    - IP段: "192.168.1.101~108" 表示从192.168.1.101到192.168.1.108
+    - 数组: ["192.168.0.1", "192.168.0.2", "192.168.0.5"]
+    """
+    if isinstance(host_spec, list):
+        return host_spec
+    if isinstance(host_spec, str) and '~' in host_spec:
+        parts = host_spec.split('~')
+        if len(parts) == 2:
+            base_ip = parts[0]
+            octets = base_ip.split('.')
+            if len(octets) == 4:
+                base_prefix = '.'.join(octets[:3])
+                start = int(octets[3])
+                end_part = parts[1].strip()
+                if '.' in end_part:
+                    # 完整IP格式: 192.168.1.101~192.168.1.108
+                    end_octets = end_part.split('.')
+                    end = int(end_octets[-1])
+                else:
+                    # 仅最后一段: 192.168.1.101~108
+                    end = int(end_part)
+                return [f"{base_prefix}.{i}" for i in range(start, end + 1)]
+    return [host_spec]
 
+def _ping_single_host(host, timeout, is_local, ssh=None):
+    """检测单个主机的连通性"""
     try:
         if is_local:
-            # 本地Docker检测
-            # 检查Docker是否可用
-            check_cmd = 'docker --version'
-            output, error = execute_local_command(check_cmd)
-            if error:
-                # Docker不可用，返回空信息
-                return docker_info
-
-            # 获取镜像信息
-            img_output, img_error = execute_local_command('docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"')
-            if not img_error and img_output:
-                lines = img_output.strip().split('\n')
-                if len(lines) > 1:  # 跳过标题行
-                    total_size = 0
-                    for line in lines[1:]:
-                        parts = line.split('\t')
-                        if len(parts) >= 2:
-                            name = parts[0]
-                            size_str = parts[1]
-                            size_bytes = parse_size_to_bytes(size_str)
-                            total_size += size_bytes
-
-                            docker_info['images'].append({
-                                'name': name,
-                                'size': size_str,
-                                'size_bytes': size_bytes
-                            })
-                    docker_info['total_images_size'] = format_bytes(total_size)
-
-            # 获取容器信息
-            cont_output, cont_error = execute_local_command('docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Size}}"')
-            if not cont_error and cont_output:
-                lines = cont_output.strip().split('\n')
-                if len(lines) > 1:  # 跳过标题行
-                    total_size = 0
-                    for line in lines[1:]:
-                        parts = line.split('\t')
-                        if len(parts) >= 2:
-                            name = parts[0]
-                            status = parts[1]
-                            size_str = parts[2] if len(parts) > 2 else '0B'
-                            size_bytes = parse_size_to_bytes(size_str)
-                            total_size += size_bytes
-
-                            docker_info['containers'].append({
-                                'name': name,
-                                'status': status,
-                                'size': size_str,
-                                'size_bytes': size_bytes,
-                                'is_running': 'Up' in status
-                            })
-                    docker_info['total_containers_size'] = format_bytes(total_size)
-
+            if platform.system() == 'Windows':
+                output, error = execute_local_command(f'ping -n 1 -w {timeout * 1000} {host}', timeout=timeout + 2)
+            else:
+                output, error = execute_local_command(f'ping -c 1 -W {timeout} {host}', timeout=timeout + 2)
         else:
-            # 远程Docker检测
-            # 检查Docker是否可用
-            check_cmd = 'docker --version'
-            output, error = execute_command(ssh, check_cmd)
-            if error:
-                return docker_info
+            output, error = execute_command(ssh, f'ping -c 1 -W {timeout} {host}', timeout=timeout + 2)
 
-            # 获取镜像信息
-            img_output, img_error = execute_command(ssh, 'docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"')
-            if not img_error and img_output:
-                lines = img_output.strip().split('\n')
-                if len(lines) > 1:
-                    total_size = 0
-                    for line in lines[1:]:
-                        parts = line.split('\t')
-                        if len(parts) >= 2:
-                            name = parts[0]
-                            size_str = parts[1]
-                            size_bytes = parse_size_to_bytes(size_str)
-                            total_size += size_bytes
+        if error or not output:
+            return {'host': host, 'status': 'unreachable', 'latency': None}
 
-                            docker_info['images'].append({
-                                'name': name,
-                                'size': size_str,
-                                'size_bytes': size_bytes
-                            })
-                    docker_info['total_images_size'] = format_bytes(total_size)
+        output_lower = output.lower()
+        if '100% packet loss' in output_lower or 'unreachable' in output_lower or 'timed out' in output_lower or 'could not find host' in output_lower:
+            return {'host': host, 'status': 'unreachable', 'latency': None}
 
-            # 获取容器信息
-            cont_output, cont_error = execute_command(ssh, 'docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Size}}"')
-            if not cont_error and cont_output:
-                lines = cont_output.strip().split('\n')
-                if len(lines) > 1:
-                    total_size = 0
-                    for line in lines[1:]:
-                        parts = line.split('\t')
-                        if len(parts) >= 2:
-                            name = parts[0]
-                            status = parts[1]
-                            size_str = parts[2] if len(parts) > 2 else '0B'
-                            size_bytes = parse_size_to_bytes(size_str)
-                            total_size += size_bytes
+        # 提取延迟
+        latency_match = re.search(r'(?:min/avg/max|time[=<])([\d.]+)\s*ms', output, re.IGNORECASE)
+        if not latency_match:
+            latency_match = re.search(r'时间[=<]([\d.]+)ms', output, re.IGNORECASE)
+        latency = latency_match.group(1) if latency_match else None
 
-                            docker_info['containers'].append({
-                                'name': name,
-                                'status': status,
-                                'size': size_str,
-                                'size_bytes': size_bytes,
-                                'is_running': 'Up' in status
-                            })
-                    docker_info['total_containers_size'] = format_bytes(total_size)
+        return {'host': host, 'status': 'reachable', 'latency': latency}
 
     except Exception as e:
-        print(f"获取Docker信息失败: {e}")
+        print(f"检测端点连通性失败 {host}: {e}")
+        return {'host': host, 'status': 'error', 'latency': None}
 
-    return docker_info
+
+def check_endpoint_connectivity(endpoint_spec, ssh=None, is_local=False):
+    """检测存储端点连通性（ping）- 并行检测多个IP"""
+    timeout = 2  # 2秒超时
+    hosts = expand_endpoint_host(endpoint_spec['host'])
+
+    # 如果配置了名称，使用配置的名称；否则使用第一个IP作为名称
+    ep_name = endpoint_spec.get('name', hosts[0])
+
+    # 并行ping所有主机
+    results = []
+    if len(hosts) == 1:
+        results = [_ping_single_host(hosts[0], timeout, is_local, ssh)]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(hosts), 16)) as executor:
+            futures = {executor.submit(_ping_single_host, h, timeout, is_local, ssh): h for h in hosts}
+            for future in as_completed(futures, timeout=timeout + 5):
+                try:
+                    results.append(future.result(timeout=timeout + 3))
+                except Exception as e:
+                    host = futures[future]
+                    log.debug(f"ping {host} 超时: {e}")
+                    results.append({'host': host, 'status': 'error', 'latency': None})
+
+    # 统计结果
+    reachable_count = sum(1 for r in results if r['status'] == 'reachable')
+    total_latency = sum(float(r['latency']) for r in results if r['latency'])
+
+    # 如果只有一个IP，直接返回单个结果
+    if len(hosts) == 1:
+        return {
+            'name': ep_name,
+            'host': endpoint_spec['host'],
+            'status': results[0]['status'] if results else 'error',
+            'latency': results[0]['latency'] if results else None,
+            'details': results
+        }
+    else:
+        avg_latency = f"{total_latency/reachable_count:.1f}" if reachable_count > 0 else None
+        unreachable_hosts = [r['host'] for r in results if r['status'] in ('unreachable', 'error')]
+        return {
+            'name': ep_name,
+            'host': endpoint_spec['host'],
+            'status': 'reachable' if reachable_count == len(hosts) else ('partial' if reachable_count > 0 else 'unreachable'),
+            'latency': avg_latency,
+            'reachable_count': reachable_count,
+            'total_count': len(hosts),
+            'unreachable_hosts': unreachable_hosts,
+            'details': results
+        }
 
 def parse_size_to_bytes(size_str):
     """将大小字符串转换为字节数"""
@@ -851,171 +834,24 @@ def format_bytes(bytes_value):
         bytes_value /= 1024.0
     return f"{bytes_value:.1f}PB"
 
-def get_storage_optimization_suggestions(storage_info, docker_info, llm_config=None):
-    """获取存储优化建议"""
-    suggestions = []
-
-    # 基础规则建议
-    for mount_point, info in storage_info.items():
-        if info['usage_percent'] > 90:
-            suggestions.append({
-                'type': 'critical',
-                'target': mount_point,
-                'message': f"{mount_point} 目录使用率达到 {info['usage_percent']}%，急需清理！",
-                'actions': [
-                    '清理临时文件：rm -rf /tmp/*',
-                    '清理日志文件：journalctl --vacuum-time=7d',
-                    '查找大文件：find {mount_point} -type f -size +1G -exec ls -lh {{}} \\;'
-                ]
-            })
-        elif info['usage_percent'] > 80:
-            suggestions.append({
-                'type': 'warning',
-                'target': mount_point,
-                'message': f"{mount_point} 目录使用率达到 {info['usage_percent']}%，建议清理",
-                'actions': [
-                    '清理包管理器缓存：apt-get clean (Ubuntu/Debian) 或 yum clean all (CentOS)',
-                    '清理旧内核：apt autoremove --purge',
-                    '检查用户目录：du -sh {mount_point}/home/*'
-                ]
-            })
-
-    # Docker相关建议
-    if docker_info['images']:
-        total_images_size = parse_size_to_bytes(docker_info['total_images_size'])
-        if total_images_size > 5 * 1024 * 1024 * 1024:  # 超过5GB
-            suggestions.append({
-                'type': 'docker',
-                'target': 'docker_images',
-                'message': f"Docker镜像占用 {docker_info['total_images_size']} 空间",
-                'actions': [
-                    '清理无用镜像：docker image prune -a',
-                    '清理悬空镜像：docker rmi $(docker images -f "dangling=true" -q)',
-                    '查看镜像大小：docker images --format "table {{.Repository}}\t{{.Size}}" | sort -k2 -hr'
-                ]
-            })
-
-    stopped_containers = [c for c in docker_info['containers'] if not c['is_running']]
-    if len(stopped_containers) > 5:
-        suggestions.append({
-            'type': 'docker',
-            'target': 'docker_containers',
-            'message': f"发现 {len(stopped_containers)} 个停止的容器",
-            'actions': [
-                '清理停止的容器：docker container prune',
-                '批量删除：docker rm $(docker ps -a -q -f status=exited)',
-                '查看容器详情：docker ps -a --format "table {{.Names}}\t{{.Status}}"'
-            ]
-        })
-
-    # 如果配置了LLM，获取智能建议
-    if llm_config and llm_config.get('enabled', False):
-        print(f"LLM已启用，开始获取智能建议...")
+def _check_endpoints(host, endpoints_config, ssh=None, is_local=False):
+    """检测端点连通性，每次实时检测，与设备/存储同步更新"""
+    endpoints_info = {}
+    if not endpoints_config:
+        return endpoints_info
+    for ep in endpoints_config:
         try:
-            llm_suggestions = get_llm_storage_suggestions(storage_info, docker_info, llm_config)
-            print(f"LLM返回建议数量: {len(llm_suggestions) if llm_suggestions else 0}")
-            if llm_suggestions:
-                suggestions.extend(llm_suggestions)
-                print(f"已添加LLM建议，总建议数量: {len(suggestions)}")
+            ep_result = check_endpoint_connectivity(ep, ssh=ssh, is_local=is_local)
+            ep_host = ep['host']
+            ep_key = ep.get('name', str(ep_host))
+            endpoints_info[ep_key] = ep_result
         except Exception as e:
-            print(f"获取LLM建议失败: {e}")
-    else:
-        print(f"LLM未配置或未启用: {llm_config}")
+            print(f"检测端点 {ep.get('name', '')} 失败: {e}")
+    return endpoints_info
 
-    return suggestions
-
-def get_llm_storage_suggestions(storage_info, docker_info, llm_config):
-    """使用LLM获取智能存储优化建议"""
-    try:
-        print(f"开始调用LLM API...")
-
-        # 准备存储信息摘要
-        storage_summary = []
-        for mount_point, info in storage_info.items():
-            storage_summary.append(f"{mount_point}: {info['used']}/{info['total']} ({info['usage_percent']}%)")
-
-        docker_summary = []
-        if docker_info['images']:
-            docker_summary.append(f"Docker镜像: {len(docker_info['images'])}个，总计 {docker_info['total_images_size']}")
-        if docker_info['containers']:
-            running = len([c for c in docker_info['containers'] if c['is_running']])
-            stopped = len(docker_info['containers']) - running
-            docker_summary.append(f"Docker容器: {running}个运行中, {stopped}个已停止")
-
-        # 构建提示词 - 使用英文以获得更好的结果
-        prompt = f"""Analyze storage usage and provide optimization suggestions:
-
-Storage: {chr(10).join(storage_summary)}
-Docker: {chr(10).join(docker_summary)}
-
-Provide 3-5 practical optimization suggestions in JSON array format:
-[{{"type": "critical|warning|info", "target": "target", "message": "problem description", "actions": ["command1", "command2"], "effect": "expected effect", "risk": "risk warning"}}]
-
-Suggestions should be specific, actionable, and safe for system administrators."""
-
-        # 调用LLM API
-        api_url = llm_config.get('api_url')
-        api_key = llm_config.get('api_key')
-        model = llm_config.get('model', 'gpt-3.5-turbo')
-
-        print(f"LLM API URL: {api_url}")
-        print(f"LLM Model: {model}")
-
-        if not api_url or not api_key:
-            print(f"LLM API配置不完整: api_url={bool(api_url)}, api_key={bool(api_key)}")
-            return []
-
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        }
-
-        data = {
-            'model': model,
-            'messages': [
-                {'role': 'system', 'content': 'You are a professional system administrator specializing in storage optimization and system maintenance.'},
-                {'role': 'user', 'content': prompt}
-            ],
-            'temperature': 0.7
-        }
-
-        print(f"发送请求到LLM API...")
-        response = requests.post(api_url, headers=headers, json=data, timeout=90)
-        response.raise_for_status()
-        print(f"LLM API响应状态: {response.status_code}")
-
-        result = response.json()
-        print(f"LLM API响应结构: {list(result.keys())}")
-
-        if 'choices' in result and len(result['choices']) > 0:
-            content = result['choices'][0]['message']['content']
-            print(f"LLM原始响应内容: {content[:200]}...")
-            # 尝试解析JSON响应
-            try:
-                suggestions = json.loads(content)
-                print(f"成功解析LLM建议，数量: {len(suggestions)}")
-                return suggestions
-            except json.JSONDecodeError as e:
-                # 如果解析失败，返回空列表
-                print(f"LLM返回的不是有效的JSON: {e}")
-                print(f"原始内容: {content}")
-                return []
-        else:
-            print(f"LLM API响应格式异常，缺少choices字段")
-            return []
-
-    except requests.exceptions.Timeout:
-        print(f"调用LLM API超时")
-        return []
-    except requests.exceptions.RequestException as e:
-        print(f"调用LLM API请求失败: {e}")
-        return []
-    except Exception as e:
-        print(f"调用LLM API失败: {e}")
-        return []
 
 def get_server_info(server_config):
-    """获取单个服务器信息"""
+    """获取单个服务器信息 - 设备/存储/端点独立采集，互不影响"""
     server_name = server_config['name']
     host = server_config['host']
     server_type = server_config.get('type', 'gpu')
@@ -1024,12 +860,21 @@ def get_server_info(server_config):
     is_local = server_config.get('local', False) or host == 'localhost' or host == '127.0.0.1'
 
     # 获取存储监控配置
-    enable_storage = server_config.get('enable_storage_monitoring', True)
-    enable_docker = server_config.get('enable_docker_monitoring', True)
+    storage_config = server_config.get('storage', {})
+    mounts = storage_config.get('mounts', None) if storage_config else None
+    endpoints_config = storage_config.get('endpoints', []) if storage_config else []
 
-    try:
-        if is_local:
-            # 本地监控
+    # 初始化各部分数据
+    devices = []
+    storage_info = {}
+    endpoints_info = {}
+    errors = []
+
+    if is_local:
+        # ---- 本地监控 ----
+
+        # 1. 采集设备信息
+        try:
             if server_type == 'npu':
                 command = 'npu-smi info'
             else:
@@ -1038,130 +883,150 @@ def get_server_info(server_config):
             output, error = execute_local_command(command)
 
             if error:
-                return {
-                    'name': server_name,
-                    'host': host,
-                    'status': 'error',
-                    'error': error,
-                    'devices': [],
-                    'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-
-            if server_type == 'npu':
-                devices = parse_npu_smi(output)
+                errors.append(f'设备检测: {error}')
             else:
-                devices = parse_nvidia_smi(output)
+                if server_type == 'npu':
+                    devices = parse_npu_smi(output)
+                else:
+                    devices = parse_nvidia_smi(output)
+        except Exception as e:
+            errors.append(f'设备检测异常: {e}')
+            print(f"本地设备检测失败 {server_name}: {e}")
 
-            # 获取存储信息
-            storage_info = {}
-            docker_info = {'images': [], 'containers': [], 'total_images_size': '0B', 'total_containers_size': '0B'}
+        # 2. 采集存储信息
+        try:
+            if storage_config:
+                storage_info = get_storage_info(is_local=True, mounts=mounts)
+        except Exception as e:
+            errors.append(f'存储检测异常: {e}')
+            print(f"本地存储检测失败 {server_name}: {e}")
 
-            if enable_storage:
-                storage_info = get_storage_info(is_local=True)
+        # 3. 采集端点连通性
+        try:
+            endpoints_info = _check_endpoints(host, endpoints_config, is_local=True)
+        except Exception as e:
+            errors.append(f'端点检测异常: {e}')
+            print(f"本地端点检测失败 {server_name}: {e}")
 
-            if enable_docker:
-                docker_info = get_docker_info(is_local=True)
+        status = 'online' if devices else ('error' if errors else 'online')
+        return {
+            'name': server_name,
+            'host': host,
+            'status': status,
+            'type': server_type,
+            'error': '; '.join(errors) if errors and not devices else None,
+            'devices': devices,
+            'storage': storage_info,
+            'endpoints': endpoints_info,
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'local': True
+        }
 
-            return {
-                'name': server_name,
-                'host': host,
-                'status': 'online',
-                'type': server_type,
-                'devices': devices,
-                'storage': storage_info,
-                'docker': docker_info,
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'local': True
+    else:
+        # ---- 远程监控 ----
+
+        # SSH连接
+        auth_config = server_config.get('auth')
+        if not auth_config:
+            auth_config = {
+                'type': 'password',
+                'username': server_config.get('username'),
+                'password': server_config.get('password')
             }
 
-        else:
-            # 远程监控 - 支持多种认证方式
-            auth_config = server_config.get('auth')
-            if not auth_config:
-                # 兼容旧配置格式
-                auth_config = {
-                    'type': 'password',
-                    'username': server_config.get('username'),
-                    'password': server_config.get('password')
-                }
-
-            bastion_config = server_config.get('bastion')
+        bastion_config = server_config.get('bastion')
+        ssh = None
+        try:
             ssh = ssh_connect(
                 host,
                 server_config.get('port', 22),
                 auth_config,
                 bastion_config
             )
+        except Exception as e:
+            print(f"SSH连接异常 {server_name}: {e}")
 
-            if not ssh:
-                return {
-                    'name': server_name,
-                    'host': host,
-                    'status': 'offline',
-                    'error': 'SSH连接失败',
-                    'devices': [],
-                    'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-
-            if server_type == 'npu':
-                command = 'npu-smi info'
-            else:
-                command = 'nvidia-smi'
-
-            output, error = execute_command(ssh, command)
-
-            # 获取存储信息
-            storage_info = {}
-            docker_info = {'images': [], 'containers': [], 'total_images_size': '0B', 'total_containers_size': '0B'}
-
-            if enable_storage:
-                storage_info = get_storage_info(ssh=ssh, is_local=False)
-
-            if enable_docker:
-                docker_info = get_docker_info(ssh=ssh, is_local=False)
-
-            ssh.close()
-
-            if error:
-                return {
-                    'name': server_name,
-                    'host': host,
-                    'status': 'error',
-                    'error': error,
-                    'devices': [],
-                    'storage': storage_info,
-                    'docker': docker_info,
-                    'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-
-            if server_type == 'npu':
-                devices = parse_npu_smi(output)
-            else:
-                devices = parse_nvidia_smi(output)
-
+        if not ssh:
             return {
                 'name': server_name,
                 'host': host,
-                'status': 'online',
+                'status': 'offline',
+                'error': 'SSH连接失败',
+                'devices': [],
+                'storage': {},
+                'endpoints': {},
+                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+        try:
+            # 1. 采集设备信息
+            try:
+                if server_type == 'npu':
+                    command = 'npu-smi info'
+                else:
+                    command = 'nvidia-smi'
+
+                output, error = execute_command(ssh, command)
+
+                if error:
+                    errors.append(f'设备检测: {error}')
+                else:
+                    if server_type == 'npu':
+                        devices = parse_npu_smi(output)
+                    else:
+                        devices = parse_nvidia_smi(output)
+            except Exception as e:
+                errors.append(f'设备检测异常: {e}')
+                print(f"远程设备检测失败 {server_name}: {e}")
+
+            # 2. 采集存储信息
+            try:
+                if storage_config:
+                    storage_info = get_storage_info(ssh=ssh, is_local=False, mounts=mounts)
+            except Exception as e:
+                errors.append(f'存储检测异常: {e}')
+                print(f"远程存储检测失败 {server_name}: {e}")
+
+            # 3. 采集端点连通性
+            try:
+                endpoints_info = _check_endpoints(host, endpoints_config, ssh=ssh, is_local=False)
+            except Exception as e:
+                errors.append(f'端点检测异常: {e}')
+                print(f"远程端点检测失败 {server_name}: {e}")
+
+            ssh.close()
+
+            status = 'online' if devices else ('error' if errors else 'online')
+            return {
+                'name': server_name,
+                'host': host,
+                'status': status,
                 'type': server_type,
+                'error': '; '.join(errors) if errors and not devices else None,
                 'devices': devices,
                 'storage': storage_info,
-                'docker': docker_info,
+                'endpoints': endpoints_info,
                 'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'local': False
             }
 
-    except Exception as e:
-        return {
-            'name': server_name,
-            'host': host,
-            'status': 'error',
-            'error': str(e),
-            'devices': [],
-            'storage': {},
-            'docker': {'images': [], 'containers': [], 'total_images_size': '0B', 'total_containers_size': '0B'},
-            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+        except Exception as e:
+            if ssh:
+                try:
+                    ssh.close()
+                except:
+                    pass
+            return {
+                'name': server_name,
+                'host': host,
+                'status': 'error',
+                'error': str(e),
+                'devices': devices,
+                'storage': storage_info,
+                'endpoints': endpoints_info,
+                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'local': False
+            }
 
 def update_single_server(server_config):
     """更新单个服务器状态 - 用于并发执行"""
@@ -1521,142 +1386,6 @@ def delete_server(name):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/storage/suggestions/<host>', methods=['GET'])
-def get_storage_suggestions(host):
-    """获取指定服务器的存储优化建议"""
-    try:
-        if host not in server_status:
-            return jsonify({'error': '服务器不存在'}), 404
-
-        server_info = server_status[host]
-        storage_info = server_info.get('storage', {})
-        docker_info = server_info.get('docker', {'images': [], 'containers': [], 'total_images_size': '0B', 'total_containers_size': '0B'})
-
-        # 获取LLM配置
-        config = load_server_config()
-        llm_config = config.get('llm_config', {})
-
-        # 生成优化建议
-        suggestions = get_storage_optimization_suggestions(storage_info, docker_info, llm_config)
-
-        return jsonify({
-            'server': server_info['name'],
-            'host': host,
-            'storage_info': storage_info,
-            'docker_info': docker_info,
-            'suggestions': suggestions,
-            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/storage/analyze', methods=['POST'])
-def analyze_storage():
-    """分析多个服务器的存储状况并生成综合建议"""
-    try:
-        data = request.json
-        hosts = data.get('hosts', [])
-
-        if not hosts:
-            # 如果没有指定主机，分析所有服务器
-            hosts = list(server_status.keys())
-
-        analysis_results = []
-        total_suggestions = []
-
-        for host in hosts:
-            if host in server_status:
-                server_info = server_status[host]
-                storage_info = server_info.get('storage', {})
-                docker_info = server_info.get('docker', {'images': [], 'containers': [], 'total_images_size': '0B', 'total_containers_size': '0B'})
-
-                # 获取LLM配置
-                config = load_server_config()
-                llm_config = config.get('llm_config', {})
-
-                # 生成优化建议
-                suggestions = get_storage_optimization_suggestions(storage_info, docker_info, llm_config)
-
-                analysis_results.append({
-                    'server': server_info['name'],
-                    'host': host,
-                    'storage_info': storage_info,
-                    'docker_info': docker_info,
-                    'suggestions_count': len(suggestions),
-                    'critical_issues': len([s for s in suggestions if s.get('type') == 'critical']),
-                    'warning_issues': len([s for s in suggestions if s.get('type') == 'warning'])
-                })
-
-                total_suggestions.extend(suggestions)
-
-        # 生成综合统计
-        summary = {
-            'total_servers': len(analysis_results),
-            'servers_with_issues': len([r for r in analysis_results if r['suggestions_count'] > 0]),
-            'total_critical_issues': sum(r['critical_issues'] for r in analysis_results),
-            'total_warning_issues': sum(r['warning_issues'] for r in analysis_results),
-            'most_common_issues': _get_most_common_issues(total_suggestions)
-        }
-
-        return jsonify({
-            'summary': summary,
-            'server_analysis': analysis_results,
-            'all_suggestions': total_suggestions,
-            'analyzed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-def _get_most_common_issues(suggestions):
-    """获取最常见的问题类型"""
-    if not suggestions:
-        return []
-
-    issue_counts = {}
-    for suggestion in suggestions:
-        target = suggestion.get('target', 'unknown')
-        if target not in issue_counts:
-            issue_counts[target] = 0
-        issue_counts[target] += 1
-
-    # 按出现频次排序，返回前5个最常见的问题
-    sorted_issues = sorted(issue_counts.items(), key=lambda x: x[1], reverse=True)
-    return [{'target': target, 'count': count} for target, count in sorted_issues[:5]]
-
-@app.route('/api/config/llm', methods=['GET'])
-def get_llm_config():
-    """获取LLM配置"""
-    try:
-        config = load_server_config()
-        llm_config = config.get('llm_config', {})
-        return jsonify(llm_config)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/config/llm', methods=['POST'])
-def update_llm_config():
-    """更新LLM配置"""
-    try:
-        llm_config = request.json
-        config = load_server_config()
-
-        # 验证LLM配置
-        if llm_config.get('enabled', False):
-            if not llm_config.get('api_url') or not llm_config.get('api_key'):
-                return jsonify({'error': '启用LLM时必须提供API URL和API密钥'}), 400
-
-        # 保存配置
-        config['llm_config'] = llm_config
-        if save_server_config(config):
-            return jsonify({'message': 'LLM配置更新成功'})
-        else:
-            return jsonify({'error': '保存配置失败'}), 500
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/sse')
 def sse_stream():
     """SSE流式接口"""
@@ -1728,14 +1457,14 @@ def sse_stream():
             heartbeat_count = 0
             while True:
                 try:
-                    # 设置25秒超时，用于定期心跳（小于30秒以避免超时）
-                    message = client_queue.get(timeout=25)
+                    # 150秒超时心跳，2次共300秒（5分钟）触发更新
+                    message = client_queue.get(timeout=150)
                     yield message
                 except queue.Empty:
-                    # 每2次心跳（约50秒）触发一次服务器更新
+                    # 每2次心跳（约5分钟）触发一次服务器更新
                     heartbeat_count += 1
                     if heartbeat_count % 2 == 0:
-                        print("SSE心跳触发服务器状态更新")
+                        print("SSE定时刷新（5分钟间隔）")
                         # 在单独线程中触发更新，避免阻塞SSE流
                         update_thread = threading.Thread(target=update_all_servers, daemon=True)
                         update_thread.start()
@@ -1775,248 +1504,104 @@ def sse_stream():
 
 @app.route('/api/mock/data', methods=['GET'])
 def get_mock_data():
-    """获取mock数据用于前端测试"""
+    """获取mock数据用于前端测试 - 20台服务器"""
     import random
 
-    mock_servers = [
-        {
-            'name': 'GPU服务器1',
-            'host': '192.168.1.10',
+    def make_server(idx, name, dev_count, dev_type, storage_mounts=2, endpoints=1):
+        devices = [
+            {'id': str(i),
+             'name': 'NVIDIA A100' if dev_type == 'gpu' else 'Ascend 910B',
+             'temp': f'{random.randint(55,82)}°C',
+             'power': f'{random.randint(250,400)}W / 400W' if dev_type == 'gpu' else f'{random.randint(200,300)}W / 300W',
+             'memory_usage': f'{random.randint(15000,38000)}MB / 40960MB',
+             'utilization': f'{random.randint(40,98)}%'}
+            for i in range(dev_count)
+        ]
+
+        storage = {}
+        mounts = ['/', '/home', '/data', '/mnt/storage'][:storage_mounts]
+        for mount in mounts:
+            total = random.choice(['500G', '1.0T', '2.0T', '5.0T'])
+            used_pct = random.randint(30, 95)
+            storage[mount] = {
+                'total': total,
+                'used': f"{int(float(total[:-1]) * used_pct / 100)}{total[-1]}",
+                'free': f"{int(float(total[:-1]) * (100-used_pct) / 100)}{total[-1]}",
+                'usage_percent': used_pct,
+                'status': 'warning' if used_pct > 85 else 'normal'
+            }
+
+        eps = {}
+        for epi in range(endpoints):
+            ip_count = random.choice([1, 2, 5])
+            if ip_count == 1:
+                reachable = random.choice([True, True, False])
+                single_host = f'192.168.0.{random.randint(1,254)}'
+                eps[f'endpoint-{epi+1}'] = {
+                    'name': f'存储端点{epi+1}',
+                    'host': single_host,
+                    'status': 'reachable' if reachable else 'unreachable',
+                    'latency': f'{random.uniform(0.2,5.0):.1f}' if reachable else None,
+                    'details': [{
+                        'host': single_host,
+                        'status': 'reachable' if reachable else 'unreachable',
+                        'latency': f'{random.uniform(0.2,5.0):.1f}' if reachable else None
+                    }]
+                }
+            else:
+                all_reachable = random.choice([True, True, False])
+                ips = [f'10.0.0.{100+i}' for i in range(ip_count)]
+                details = []
+                for ip in ips:
+                    ip_ok = all_reachable or random.choice([True, False])
+                    details.append({
+                        'host': ip,
+                        'status': 'reachable' if ip_ok else 'unreachable',
+                        'latency': f'{random.uniform(0.2,5.0):.1f}' if ip_ok else None
+                    })
+                reachable_ips = [d for d in details if d['status'] == 'reachable']
+                unreachable_ips = [d['host'] for d in details if d['status'] != 'reachable']
+                avg_lat = f'{sum(float(d["latency"]) for d in reachable_ips)/len(reachable_ips):.1f}' if reachable_ips else None
+                eps[f'nas-cluster-{epi+1}'] = {
+                    'name': f'NAS集群{epi+1}',
+                    'host': ips,
+                    'status': 'reachable' if len(reachable_ips) == ip_count else ('partial' if reachable_ips else 'unreachable'),
+                    'latency': avg_lat,
+                    'reachable_count': len(reachable_ips),
+                    'total_count': ip_count,
+                    'unreachable_hosts': unreachable_ips,
+                    'details': details
+                }
+
+        return {
+            'name': f'{name}{idx}',
+            'host': f'192.168.1.{10+idx}',
             'status': 'online',
-            'type': 'gpu',
-            'devices': [
-                {
-                    'id': '0',
-                    'name': 'NVIDIA RTX 4090',
-                    'temp': '65°C',
-                    'power': '350W / 450W',
-                    'memory_usage': '12288MB / 24576MB',
-                    'utilization': '85%'
-                },
-                {
-                    'id': '1',
-                    'name': 'NVIDIA RTX 4090',
-                    'temp': '70°C',
-                    'power': '380W / 450W',
-                    'memory_usage': '16384MB / 24576MB',
-                    'utilization': '92%'
-                }
-            ],
-            'storage': {
-                '/': {
-                    'total': '500G',
-                    'used': '425G',
-                    'free': '75G',
-                    'usage_percent': 85,
-                    'status': 'warning'
-                },
-                '/home': {
-                    'total': '1.0T',
-                    'used': '600G',
-                    'free': '424G',
-                    'usage_percent': 60,
-                    'status': 'normal'
-                }
-            },
-            'docker': {
-                'images': [
-                    {'name': 'pytorch/pytorch:latest', 'size': '6.2GB', 'size_bytes': 6652164566},
-                    {'name': 'tensorflow/tensorflow:latest', 'size': '4.8GB', 'size_bytes': 5153960755},
-                    {'name': 'ubuntu:20.04', 'size': '72.8MB', 'size_bytes': 76336384}
-                ],
-                'containers': [
-                    {'name': 'ml-training-1', 'status': 'Up 2 days', 'size': '12.3GB', 'size_bytes': 13207024435, 'is_running': True},
-                    {'name': 'web-server', 'status': 'Up 5 hours', 'size': '256MB', 'size_bytes': 268435456, 'is_running': True},
-                    {'name': 'db-container', 'status': 'Exited (0) 1 hour ago', 'size': '8.5GB', 'size_bytes': 9126805504, 'is_running': False}
-                ],
-                'total_images_size': '11.1GB',
-                'total_containers_size': '21.1GB'
-            },
-            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'local': False
-        },
-        {
-            'name': 'NPU服务器1',
-            'host': '192.168.1.20',
-            'status': 'online',
-            'type': 'npu',
-            'devices': [
-                {
-                    'id': '0',
-                    'name': 'Ascend 910B',
-                    'temp': '72°C',
-                    'power': '280W / 300W',
-                    'memory_usage': '24576MB / 32768MB',
-                    'utilization': '88%'
-                },
-                {
-                    'id': '1',
-                    'name': 'Ascend 910B',
-                    'temp': '68°C',
-                    'power': '260W / 300W',
-                    'memory_usage': '20480MB / 32768MB',
-                    'utilization': '75%'
-                },
-                {
-                    'id': '2',
-                    'name': 'Ascend 910B',
-                    'temp': '75°C',
-                    'power': '295W / 300W',
-                    'memory_usage': '28672MB / 32768MB',
-                    'utilization': '95%'
-                },
-                {
-                    'id': '3',
-                    'name': 'Ascend 910B',
-                    'temp': '70°C',
-                    'power': '270W / 300W',
-                    'memory_usage': '16384MB / 32768MB',
-                    'utilization': '68%'
-                }
-            ],
-            'storage': {
-                '/': {
-                    'total': '2.0T',
-                    'used': '1.8T',
-                    'free': '200G',
-                    'usage_percent': 90,
-                    'status': 'warning'
-                },
-                '/home': {
-                    'total': '4.0T',
-                    'used': '1.2T',
-                    'free': '2.8T',
-                    'usage_percent': 30,
-                    'status': 'normal'
-                }
-            },
-            'docker': {
-                'images': [
-                    {'name': 'mindspore/mindspore:latest', 'size': '8.5GB', 'size_bytes': 9126805504},
-                    {'name': 'ubuntu:18.04', 'size': '63.4MB', 'size_bytes': 66485781}
-                ],
-                'containers': [
-                    {'name': 'npu-training-1', 'status': 'Up 3 days', 'size': '18.7GB', 'size_bytes': 20077964800, 'is_running': True},
-                    {'name': 'npu-training-2', 'status': 'Up 1 day', 'size': '15.2GB', 'size_bytes': 16320875520, 'is_running': True}
-                ],
-                'total_images_size': '8.6GB',
-                'total_containers_size': '33.9GB'
-            },
-            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'local': False
-        },
-        {
-            'name': '开发服务器',
-            'host': '192.168.1.30',
-            'status': 'online',
-            'type': 'gpu',
-            'devices': [
-                {
-                    'id': '0',
-                    'name': 'NVIDIA RTX 3080',
-                    'temp': '55°C',
-                    'power': '180W / 320W',
-                    'memory_usage': '6144MB / 10240MB',
-                    'utilization': '45%'
-                }
-            ],
-            'storage': {
-                '/': {
-                    'total': '1.0T',
-                    'used': '450G',
-                    'free': '575G',
-                    'usage_percent': 45,
-                    'status': 'normal'
-                },
-                '/home': {
-                    'total': '2.0T',
-                    'used': '800G',
-                    'free': '1.2T',
-                    'usage_percent': 40,
-                    'status': 'normal'
-                }
-            },
-            'docker': {
-                'images': [
-                    {'name': 'node:16-alpine', 'size': '45.6MB', 'size_bytes': 47815065},
-                    {'name': 'nginx:alpine', 'size': '23.7MB', 'size_bytes': 24834134}
-                ],
-                'containers': [
-                    {'name': 'web-app', 'status': 'Up 12 hours', 'size': '128MB', 'size_bytes': 134217728, 'is_running': True}
-                ],
-                'total_images_size': '69.3MB',
-                'total_containers_size': '128MB'
-            },
-            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'local': False
-        },
-        {
-            'name': '单卡测试服务器',
-            'host': '192.168.1.40',
-            'status': 'online',
-            'type': 'npu',
-            'devices': [
-                {
-                    'id': '0',
-                    'name': 'Ascend 310',
-                    'temp': '42°C',
-                    'power': '35W / 60W',
-                    'memory_usage': '4096MB / 8192MB',
-                    'utilization': '25%'
-                }
-            ],
-            'storage': {
-                '/': {
-                    'total': '500G',
-                    'used': '380G',
-                    'free': '120G',
-                    'usage_percent': 76,
-                    'status': 'normal'
-                }
-            },
-            'docker': {
-                'images': [],
-                'containers': [],
-                'total_images_size': '0B',
-                'total_containers_size': '0B'
-            },
-            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'local': False
-        },
-        {
-            'name': '高密度服务器',
-            'host': '192.168.1.50',
-            'status': 'online',
-            'type': 'gpu',
-            'devices': [
-                {'id': str(i), 'name': 'NVIDIA A100', 'temp': f'{random.randint(60,80)}°C', 'power': f'{random.randint(300,400)}W / 400W', 'memory_usage': f'{random.randint(20480,38912)}MB / 40960MB', 'utilization': f'{random.randint(70,95)}%'}
-                for i in range(8)
-            ],
-            'storage': {
-                '/': {
-                    'total': '5.0T',
-                    'used': '4.2T',
-                    'free': '800G',
-                    'usage_percent': 84,
-                    'status': 'warning'
-                }
-            },
-            'docker': {
-                'images': [
-                    {'name': 'cuda:12.1', 'size': '15.2GB', 'size_bytes': 16320875520},
-                    {'name': 'pytorch:2.0', 'size': '12.8GB', 'size_bytes': 13743895347}
-                ],
-                'containers': [
-                    {'name': f'gpu-job-{i}', 'status': 'Up', 'size': f'{random.randint(5,20)}GB', 'size_bytes': random.randint(5368709120, 21474836480), 'is_running': True}
-                    for i in range(5)
-                ],
-                'total_images_size': '28.0GB',
-                'total_containers_size': '75.2GB'
-            },
+            'type': dev_type,
+            'devices': devices,
+            'storage': storage,
+            'endpoints': eps,
             'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'local': False
         }
-    ]
+
+    mock_servers = []
+
+    # 8台8卡GPU服务器
+    for i in range(1, 9):
+        mock_servers.append(make_server(i, 'GPU训练', 8, 'gpu', 3, 2))
+
+    # 4台4卡NPU服务器
+    for i in range(1, 5):
+        mock_servers.append(make_server(i, 'NPU推理', 4, 'npu', 2, 2))
+
+    # 6台2卡GPU服务器
+    for i in range(1, 7):
+        mock_servers.append(make_server(i, 'GPU开发', 2, 'gpu', 2, 1))
+
+    # 2台1卡NPU服务器
+    for i in range(1, 3):
+        mock_servers.append(make_server(i, 'NPU测试', 1, 'npu', 1, 1))
 
     return jsonify(mock_servers)
 
